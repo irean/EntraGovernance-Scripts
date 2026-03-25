@@ -36,10 +36,17 @@ function Get-User {
 
         $user = igall "https://graph.microsoft.com/v1.0/users/$($id)?`$select=Displayname%2CUserprincipalname%2CcompanyName%2CaccountEnabled%2CCreatedDatetime%2CLastPasswordChangeDateTime%2csignInActivity%2clastNonInteractiveSignInDateTime%2clastSignInDateTime%2CassignedLicenses%2CassignedPlans"
 
-        $result = [pscustomobject]$user
-        $result | Add-Member -NotePropertyName lastSignInDateTime -NotePropertyValue $user.signInActivity.lastSignInDateTime -Force
-        $result | Add-Member -NotePropertyName lastNonInteractiveSignInDateTime -NotePropertyValue $user.signInActivity.lastNonInteractiveSignInDateTime -Force
-        $result | Add-Member -NotePropertyName hasStrongMFA -NotePropertyValue $false -Force
+        $temp = [pscustomobject]$user
+        $result = $temp
+        | Add-Member -NotePropertyName lastSignInDateTime -NotePropertyValue $user.signInActivity.lastSignInDateTime -Force -PassThru
+        | Add-Member -NotePropertyName lastNonInteractiveSignInDateTime -NotePropertyValue $user.signInActivity.lastNonInteractiveSignInDateTime -Force -PassThru
+        | Add-Member -NotePropertyName hasStrongMFA -NotePropertyValue $false -Force -PassThru
+        | Add-Member -NotePropertyName 'Roles' -NotePropertyValue @() -PassThru -Force
+        | Add-Member -NotePropertyName "EligibleRoles" -NotePropertyValue @() -PassThru -Force
+        | Add-Member -NotePropertyName 'AzureRoles' -NotePropertyValue @() -PassThru -Force
+        | Add-Member -NotePropertyName 'AdminRiskScore' -NotePropertyValue 0 -PassThru -Force
+        | Add-Member -NotePropertyName 'AdminRiskLevel' -NotePropertyValue 0 -PassThru -Force
+        | Add-Member -NotePropertyName 'UserType' -NotePropertyValue 'User' -PassThru -Force
 
         Start-Sleep -Milliseconds 250 
 
@@ -118,10 +125,46 @@ function Get-User {
     return $cache[$Id]
 }
 
+function Get-ServicePrincipal {
+    param (
+        [string]$Id
+    )
+    # todo hämta service principal
+    
+    if (-not $cache[$Id]) {
+        $user = igall "https://graph.microsoft.com/v1.0/servicePrincipals/$($id)"
+        if (-not $user) {
+            $cache[$id] = $null
+            return $null
+        }
+        $temp = [pscustomobject]$user
+        $result = $temp
+        | Add-Member -NotePropertyName lastSignInDateTime -NotePropertyValue '' -Force -PassThru
+        | Add-Member -NotePropertyName lastNonInteractiveSignInDateTime -NotePropertyValue '' -Force -PassThru
+        | Add-Member -NotePropertyName hasStrongMFA -NotePropertyValue $false -Force -PassThru
+        | Add-Member -NotePropertyName 'Roles' -NotePropertyValue @() -PassThru -Force
+        | Add-Member -NotePropertyName "EligibleRoles" -NotePropertyValue $() -PassThru -Force
+        | Add-Member -NotePropertyName 'AzureRoles' -NotePropertyValue @() -PassThru -Force
+        | Add-Member -NotePropertyName 'AdminRiskScore' -NotePropertyValue 0 -PassThru -Force
+        | Add-Member -NotePropertyName 'AdminRiskLevel' -NotePropertyValue 0 -PassThru -Force
+        | Add-Member -NotePropertyName 'UserType' -NotePropertyValue 'ServicePrincipal' -PassThru -Force
+        $cache[$Id] = $result
+    }
+
+    return $cache[$Id]
+}
+# ROLE RISK
+$RoleRiskTable = @{
+    "Global Administrator"          = 10
+    "Privileged Role Administrator" = 9
+    "Security Administrator"        = 8
+    "User Administrator"            = 7
+    "Groups Administrator"          = 6
+}
+
 function Get-AdminRiskScore {
     param(
-        $User,
-        $Role
+        $User
     )
 
     $score = 0
@@ -131,55 +174,48 @@ function Get-AdminRiskScore {
         return 0
     }
 
-    # ROLE RISK
-    $RoleRiskTable = @{
-        "Global Administrator"          = 10
-        "Privileged Role Administrator" = 9
-        "Security Administrator"        = 8
-        "User Administrator"            = 7
-        "Groups Administrator"          = 6
-    }
-    if ($RoleRiskTable.ContainsKey($Role)) {
-        $score += $RoleRiskTable[$Role]
-    }
-    else {
-        $score += 3
-    }
+    $roleScores = @()
 
-    # MFA RISK
-    if (-not $User.hasStrongMFA) {
-        $score += 10
-    }
-    elseif ($User.StrongAuthCount -lt 2) {
-        $score += 2
-    }
-
-    # INACTIVE ADMIN
-    if ($User.lastSignInDateTime) {
-        $last = [datetime]$User.lastSignInDateTime
-        if ($last -lt (Get-Date).AddDays(-90)) {
-            $score += 3
+    foreach ($role in $User.Roles) {
+        if ($RoleRiskTable.ContainsKey($role)) {
+            $roleScores += $RoleRiskTable[$role]
+        }
+        else {
+            $roleScores += 3
         }
     }
-
-
-    # PRODUCTIVITY SERVICES
-    if ($User.ProductivityServicesEnabled) {
-        $score += 5
+    foreach ($role in $User.EligibleRoles) {
+        if ($RoleRiskTable.ContainsKey($role)) {
+            $roleScores += $RoleRiskTable[$role]
+        }
+        else {
+            $roleScores += 3
+        }
     }
-    if ($User.IsLicensed -and -not $User.hasStrongMFA) {
-        $score += 5
+    foreach ($role in $user.AzureRoles) {
+        if ($assignment.RoleDefinitionName -match "Owner") { $roleScores += 10 }
+        elseif ($assignment.RoleDefinitionName -match "User Access Administrator") { $roleScores += 8 }
+        elseif ($assignment.RoleDefinitionName -match "Contributor") { $roleScores += 6 }
+        elseif ($assignment.RoleDefinitionName -match "Reader") { $roleScores += 1 }
     }
-    if ($User.LastPasswordChangeDateTime) {
-        if ([datetime]$User.LastPasswordChangeDateTime -lt (Get-Date).AddDays(-365)) {
+
+    if ($roleScores.Count -gt 0) {
+
+        # Highest privilege drives base risk
+        $maxRole = ($roleScores | Measure-Object -Maximum).Maximum
+        $score += $maxRole
+
+        # Extra roles add smaller incremental risk
+        $extraRoles = $roleScores.Count - 1
+        if ($extraRoles -gt 0) {
+            $score += ($extraRoles * 2)
+        }
+
+        # Optional: many roles = extra concern
+        if ($roleScores.Count -ge 3) {
             $score += 2
         }
     }
-    # Service Principals
-    if ($User.ObjectType -eq "ServicePrincipal" -and $score -ge 8) {
-        $score += 5
-    }
-
     return $score
 }
 function Get-AdminRiskLevel {
@@ -236,16 +272,16 @@ Test-Module -Name ImportExcel
 Write-Host "✅ All modules are installed and imported." -ForegroundColor Green
 # Disconnect any existing sessions
 Write-Host "Disconnecting any existing sessions..." -ForegroundColor Cyan
-disconnect-Mggraph -ErrorAction SilentlyContinue
-Disconnect-AzAccount  
+#disconnect-Mggraph -ErrorAction SilentlyContinue
+#Disconnect-AzAccount  
 Write-Host "✅ All sessions disconnected." -ForegroundColor Green
 # Connect new sessions
 Write-Host "Connecting to AzAccount..." -ForegroundColor Cyan
 Disable-AzContextAutosave -Scope Process
 Update-AzConfig -LoginExperienceV2 Off -Scope Process
-Connect-AzAccount
+#Connect-AzAccount
 Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
-Connect-MgGraph -Scopes 'RoleManagement.Read.Directory', 'User.Read.All', 'User.ReadBasic.All', 'User.Read', 'GroupMember.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Directory.AccessAsUser.All', 'RoleEligibilitySchedule.Read.Directory', 'RoleManagement.Read.All', 'SecurityActions.Read.All', 'SecurityActions.ReadWrite.All', 'SecurityEvents.Read.All', "Organization.Read.All", "AuditLog.Read.All", "UserAuthenticationMethod.Read.All"   -ContextScope Process
+#Connect-MgGraph -Scopes 'RoleManagement.Read.Directory', 'User.Read.All', 'User.ReadBasic.All', 'User.Read', 'GroupMember.Read.All', 'Group.Read.All', 'Directory.Read.All', 'Directory.AccessAsUser.All', 'RoleEligibilitySchedule.Read.Directory', 'RoleManagement.Read.All', 'SecurityActions.Read.All', 'SecurityActions.ReadWrite.All', 'SecurityEvents.Read.All', "Organization.Read.All", "AuditLog.Read.All", "UserAuthenticationMethod.Read.All"   -ContextScope Process
 Write-Host "✅ You are now fully connected!" -ForegroundColor Green
 
 
@@ -331,21 +367,16 @@ $administrators = $directoryRoles | ForEach-Object {
         if ($member.'@odata.type' -notmatch 'group|ServicePrincipal') {
             Write-Host "   ↳ Found user: $($member.displayName)" -ForegroundColor Cyan
             Write-Host "     → Getting user details from Graph..." -ForegroundColor DarkGray
-            $member = Get-User -id $member.id 
-            $member = $member | Select-Object *
+            $user = Get-User -id $member.id 
 
-            Write-Host "     → Adding user '$($member.DisplayName)' to role '$role'" -ForegroundColor Yellow
+            Write-Host "     → Adding user '$($user.DisplayName)' to role '$role'" -ForegroundColor Yellow
+            
+            $user.Roles += $role
 
-            $member = Add-Member -InputObject $member -NotePropertyName 'Role' -NotePropertyValue $role -PassThru -Force
-
-            $member = Add-Member -InputObject $member -NotePropertyName 'lastSignInDateTime' -NotePropertyValue $member.signInActivity.lastSignInDateTime -PassThru -Force
-            $riskScore = Get-AdminRiskScore -User $member -Role $role
-            $riskLevel = Get-AdminRiskLevel $riskScore
-
-            $member | Add-Member -NotePropertyName 'AdminRiskScore' -NotePropertyValue $riskScore -Force
-            $member | Add-Member -NotePropertyName 'AdminRiskLevel' -NotePropertyValue $riskLevel -Force        
-            Write-Host "     ✅ Completed: $($member.DisplayName)" -ForegroundColor Green
-            $member
+            #$user.lastSignInDateTime = $member.signInActivity.lastSignInDateTime
+               
+            Write-Host "     ✅ Completed: $($user.DisplayName)" -ForegroundColor Green
+            $user
         }
         elseif ($member.'@odata.type' -match 'group') {
             Write-Host "   ↳ Expanding group: $($member.displayName)" -ForegroundColor Cyan
@@ -360,15 +391,17 @@ $administrators = $directoryRoles | ForEach-Object {
             
         }
     }
-} | Where-Object {
+} | Sort-Object -Property id | Sort-Object -Unique -Property id | 
+Where-Object {
     # Filter out PIM activated admins as they
     # are displayed in the Eligible sheet
     $admin = $_
     $foundInAssignments = $assignmentAdmins | Where-Object {
-        $admin.id -match $_.id -and $admin.Role -match $_.Role
+        $admin.id -match $_.id -and $admin.Roles -contains $_.Role
     }
     -not $foundInAssignments
-} | Select-Object Role, displayName, Userprincipalname, companyName, AdminRiskScore, AdminRiskLevel, accountEnabled, CreatedDatetime , LastPasswordChangeDateTime, lastSignInDateTime, hasStrongMFA, StrongAuthCount, AuthPassword, AuthPhone, AuthFido2, AuthPasswordless, AuthMicrosoftAuthenticator, IsLicensed
+} 
+#| Select-Object @{L='Roles';E={$_.Roles -join ','}}, displayName, Userprincipalname, companyName, AdminRiskScore, AdminRiskLevel, accountEnabled, CreatedDatetime , LastPasswordChangeDateTime, lastSignInDateTime, hasStrongMFA, StrongAuthCount, AuthPassword, AuthPhone, AuthFido2, AuthPasswordless, AuthMicrosoftAuthenticator, IsLicensed
 
 Write-Host "✅ Administrator list compiled successfully." -ForegroundColor Green
 Write-Host "───────────────────────────────────────────────" -ForegroundColor DarkGray
@@ -380,22 +413,15 @@ $eligible = igall -Uri 'https://graph.microsoft.com/beta/roleManagement/director
     if ($e.memberType -match 'Direct' -and $principal.'@odata.type' -notmatch 'group|ServicePrincipal') {
         Write-Host "Processing eligible direct user: $($principal.displayName)" -ForegroundColor Cyan
         Write-Host " → Fetching detailed info for $($principal.userPrincipalName)" -ForegroundColor DarkGray
-        $principal = Get-User -id $principal.id  
+        $user = Get-User -id $principal.id  
         Write-Host " → Adding role '$($e.roleDefinition["displayName"])' (MemberType: $($e.memberType))" -ForegroundColor Yellow
             
-        $principal | Add-Member -NotePropertyName "EligibleRole" -NotePropertyValue $e.roleDefinition.displayName -Force
-        $principal | Add-Member -NotePropertyName "MemberType" -NotePropertyValue $e.memberType -Force
-
-        if ($principal.signInActivity) {
-            $principal | Add-Member lastSignInDateTime $principal.signInActivity.lastSignInDateTime -Force
+        $user.EligibleRoles += [pscustomobject]@{
+            'Role'       = $e.roleDefinition.displayName
+            'MemberType' = $e.memberType
         }
-        $riskScore = Get-AdminRiskScore -User $principal -Role $principal.EligibleRole
-        $riskLevel = Get-AdminRiskLevel $riskScore
 
-        $principal | Add-Member AdminRiskScore $riskScore -Force
-        $principal | Add-Member AdminRiskLevel $riskLevel -Force
-
-        $principal
+        $user
         Write-Host " ✅ Completed processing for $($principal.DisplayName)" -ForegroundColor Green
 
     }
@@ -413,22 +439,10 @@ $eligible = igall -Uri 'https://graph.microsoft.com/beta/roleManagement/director
             Write-Progress -Activity "Expanding group: $($e.principal.displayName)" -Status "$counter of $total members" -PercentComplete $percent
             if ($_.'@odata.type' -eq '#microsoft.graph.user') {
 
-                $member = Get-User -id $_.id
-                $member = $member | Select-Object *
-                $member | Add-Member IdentityType "User" -Force
-
-
+                $user = Get-User -id $_.id
             }
             elseif ($_.'@odata.type' -eq '#microsoft.graph.servicePrincipal') {
-
-                $member = [pscustomobject]@{
-                    displayName       = $_.displayName
-                    UserPrincipalName = $null
-                    IdentityType      = "ServicePrincipal"
-                    hasStrongMFA      = $false
-                    StrongAuthCount   = 0
-                }
-
+                $user = Get-ServicePrincipal -id $_.id
             }
             elseif ($_.'@odata.type' -eq '#microsoft.graph.group') {
 
@@ -459,29 +473,21 @@ $eligible = igall -Uri 'https://graph.microsoft.com/beta/roleManagement/director
 
                 continue
             }
-            $member = $member | Select-Object *
-            Add-Member -InputObject $member -NotePropertyName "EligibleRole" -NotePropertyValue $e.roleDefinition["displayName"] -PassThru -Force |
-
-            Add-Member -NotePropertyName "MemberType" -NotePropertyValue "Group" -PassThru -Force |
-
-            Add-Member -NotePropertyName "EligibleRoleGroup" -NotePropertyValue $e.principal.displayName -PassThru -Force
-            if ($member.signInActivity) {
-                $member | Add-Member lastSignInDateTime $member.signInActivity.lastSignInDateTime -Force
+            $user.EligibleRoles += [pscustomobject]@{
+                'Role'       = $e.roleDefinition["displayName"]
+                'MemberType' = 'Group'
+                'Group' = $e.principal.displayname
             }
-            $riskScore = Get-AdminRiskScore -User $member -Role $member.EligibleRole
-            $riskLevel = Get-AdminRiskLevel $riskScore
 
-            $member | Add-Member -NotePropertyName AdminRiskScore -NotePropertyValue $riskScore -Force
-            $member | Add-Member -NotePropertyName AdminRiskLevel -NotePropertyValue $riskLevel -Force
-
-            $member
+            $user
             Write-Host "     ✅ Added $($member.DisplayName) from group $($e.principal.displayName)" -ForegroundColor Green
         } -End {
             Write-Progress -Activity "Expanding group: $($e.principal.displayName)" -Completed
             Write-Host "✅ Finished expanding group $($e.principal.displayName) ($total members)" -ForegroundColor Green
         }
     }
-} |  Select-Object id, displayName, Userprincipalname, EligibleRole, DirectRole, EligibleRoleGroup, memberType, AdminRiskScore, AdminRiskLevel, createdDateTime, LastPasswordChangeDateTime, lastSignInDateTime, hasStrongMFA, StrongAuthCount, AuthPassword, AuthPhone, AuthFido2, AuthPasswordless, AuthMicrosoftAuthenticator, IsLicensed
+} | Sort-Object -Property id | Sort-Object -Unique -Property id
+
 Write-Host "✅ Finished collecting all eligible role assignments." -ForegroundColor Green
 Write-Host "Fetching Azure role assignments..." -ForegroundColor Yellow
 $azroles = Get-AzSubscription | ForEach-Object {
@@ -498,38 +504,37 @@ $azroles = Get-AzSubscription | ForEach-Object {
         if ($assignment.ObjectType -eq "Group") {
             $assignmentSource = "Group"
         }
-        $isLicensed = $null
-        $productivityEnabled = $null
 
         if ($assignment.ObjectType -eq "User") {
             $user = Get-User -Id $assignment.ObjectId
-            $isLicensed = $user.IsLicensed
-            $productivityEnabled = $user.ProductivityServicesEnabled
+        } elseif ($assignment.ObjectType -match "ServicePrincipal") {
+            $user = Get-ServicePrincipal -Id $assignment.ObjectId
+            if (-not $user) {
+                return
+            }
+        } else {
+            Write-Warning "Unknown ObjectType '$($assignment.ObjectType)'"
+            return
         }
 
+        $user.AzureRoles += [pscustomobject]@{
+            'RoleDefinitionName' = $assignment.RoleDefinitionName
+            'MemberType' = $assignmentSource
+            'Subscription' = $name
+        }
 
-
-        $riskScore = 0
-
-        if ($assignment.RoleDefinitionName -match "Owner") { $riskScore = 10 }
-        elseif ($assignment.RoleDefinitionName -match "User Access Administrator") { $riskScore = 8 }
-        elseif ($assignment.RoleDefinitionName -match "Contributor") { $riskScore = 6 }
-        elseif ($assignment.RoleDefinitionName -match "Reader") { $riskScore = 1 }
-
-        $riskLevel = Get-AdminRiskLevel $riskScore
-
-        $assignment | Add-Member -NotePropertyName 'Subscription' -NotePropertyValue $name -Force
-        $assignment | Add-Member -NotePropertyName 'AdminRiskScore' -NotePropertyValue $riskScore -Force
-        $assignment | Add-Member -NotePropertyName 'AdminRiskLevel' -NotePropertyValue $riskLevel -Force
-        $assignment | Add-Member -NotePropertyName 'IsLicensed' -NotePropertyValue $isLicensed -Force
-        $assignment | Add-Member -NotePropertyName 'AssignmentSource' -NotePropertyValue $assignmentSource -Force
-        $assignment | Add-Member -NotePropertyName 'ProductivityServicesEnabled' -NotePropertyValue $productivityEnabled -Force
-
-        $assignment
+      $user
     }
 
-} | Select-Object roleDefinitionName, displayname, SigninName, ObjectId, ObjectType, AssignmentSource, Subscription, AdminRiskScore, AdminRiskLevel, IsLicensed, ProductivityServicesEnabled
+} #| Select-Object roleDefinitionName, displayname, SigninName, ObjectId, ObjectType, AssignmentSource, Subscription, AdminRiskScore, AdminRiskLevel, IsLicensed, ProductivityServicesEnabled
 
+foreach( $admin in $administrators + $eligible + $azroles) {
+    $riskScore = Get-AdminRiskScore -User $admin
+    $riskLevel = Get-AdminRiskLevel $riskScore
+
+    $admin.AdminRiskScore = $riskScore
+    $admin.AdminRiskLevel = $riskLevel
+}
 
 
 
@@ -541,79 +546,112 @@ if (Test-Path $exportPath) {
     Write-Host "Removing existing report..." -ForegroundColor Yellow
     Remove-Item $exportPath -Force
 }
-$allAdmins = @()
+$allAdmins = $administrators + $eligible + $azroles | Sort-Object -Property id | Sort-Object -Property id -Unique
 
+$allAdmins = $allAdmins | Select-Object @{L='Roles';E={$_.Roles -join ','}},@{L='EligibleRoles';E={$_.EligibleRoles.Role -join ','}},@{L='AzureRoles';E={$_.AzureRoles.RoleDefinitionName -join ','}},displayName, Userprincipalname, companyName, AdminRiskScore, AdminRiskLevel, accountEnabled, CreatedDatetime , LastPasswordChangeDateTime, lastSignInDateTime, hasStrongMFA, StrongAuthCount, AuthPassword, AuthPhone, AuthFido2, AuthPasswordless, AuthMicrosoftAuthenticator, IsLicensed
+
+$eligible = $eligible | ForEach-Object {
+    $e = $_
+    $e.EligibleRoles | foreach-object {
+        $e.PSObject.Copy() |
+        Add-Member -NotePropertyName 'MemberType' -NotePropertyValue $_.MemberType -Passthru |
+        Add-Member -NotePropertyName 'DirectRole' -NotePropertyValue $_.MemberType -Passthru |
+        Add-Member -NotePropertyName 'EligibleRoleGroup' -NotePropertyValue $_.Role -Passthru
+    }
+}
 # -------------------------
 # Administrators
 # -------------------------
-$allAdmins += $administrators | ForEach-Object {
-    [PSCustomObject]@{
-        UserPrincipalName           = $_.UserPrincipalName
-        ObjectId                    = $_.Id
-        displayName                 = $_.displayName
-        Role                        = $_.Role
-        Source                      = "Active"
-        hasStrongMFA                = $_.hasStrongMFA
-        AdminRiskScore              = $_.AdminRiskScore
-        AdminRiskLevel              = $_.AdminRiskLevel
-        lastSignInDateTime          = $_.lastSignInDateTime
-        ProductivityServicesEnabled = $_.ProductivityServicesEnabled
-    }
-}
+# $allAdmins += $administrators | ForEach-Object {
+#     [PSCustomObject]@{
+#         UserPrincipalName           = $_.UserPrincipalName
+#         ObjectId                    = $_.Id
+#         displayName                 = $_.displayName
+#         Role                        = $_.Roles -join ', '
+#         Source                      = "Active"
+#         hasStrongMFA                = $_.hasStrongMFA
+#         AdminRiskScore              = $_.AdminRiskScore
+#         AdminRiskLevel              = $_.AdminRiskLevel
+#         lastSignInDateTime          = $_.lastSignInDateTime
+#         ProductivityServicesEnabled = $_.ProductivityServicesEnabled
+#     }
+# }
 
 # -------------------------
 # Eligible Roles
 # -------------------------
-$allAdmins += $eligible | ForEach-Object {
-    [PSCustomObject]@{
-        UserPrincipalName           = $_.UserPrincipalName
-        ObjectId                    = $_.Id
-        Role                        = $_.EligibleRole
-        Source                      = "Eligible"
-        hasStrongMFA                = $_.hasStrongMFA
-        AdminRiskScore              = $_.AdminRiskScore
-        AdminRiskLevel              = $_.AdminRiskLevel
-        lastSignInDateTime          = $_.lastSignInDateTime
-        ProductivityServicesEnabled = $_.ProductivityServicesEnabled
-    }
-}
+# $allAdmins += $eligible | ForEach-Object {
+#     [PSCustomObject]@{
+#         UserPrincipalName           = $_.UserPrincipalName
+#         ObjectId                    = $_.Id
+#         Role                        = $_.EligibleRole
+#         Source                      = "Eligible"
+#         hasStrongMFA                = $_.hasStrongMFA
+#         AdminRiskScore              = $_.AdminRiskScore
+#         AdminRiskLevel              = $_.AdminRiskLevel
+#         lastSignInDateTime          = $_.lastSignInDateTime
+#         ProductivityServicesEnabled = $_.ProductivityServicesEnabled
+#     }
+# }
 
 # -------------------------
 # Azure Roles
 # -------------------------
-$allAdmins += $azroles | Where-Object ObjectType -eq "User" | ForEach-Object {
-    [PSCustomObject]@{
-        UserPrincipalName           = $_.SignInName
-        ObjectId                    = $_.ObjectId
-        Role                        = $_.RoleDefinitionName
-        Source                      = "Azure"
-        hasStrongMFA                = $false
-        AdminRiskScore              = $_.AdminRiskScore
-        AdminRiskLevel              = $_.AdminRiskLevel
-        lastSignInDateTime          = $null
-        ProductivityServicesEnabled = $false
-    }
-}
+# $allAdmins += $azroles | Where-Object ObjectType -eq "User" | ForEach-Object {
+#     [PSCustomObject]@{
+#         UserPrincipalName           = $_.SignInName
+#         ObjectId                    = $_.ObjectId
+#         Role                        = $_.RoleDefinitionName
+#         Source                      = "Azure"
+#         hasStrongMFA                = $false
+#         AdminRiskScore              = $_.AdminRiskScore
+#         AdminRiskLevel              = $_.AdminRiskLevel
+#         lastSignInDateTime          = $null
+#         ProductivityServicesEnabled = $false
+#     }
+# }
 
 # -------------------------
-# CLEAN + DEDUPE (INCLUDED!)
+# CLEAN + DEDUPE
 # -------------------------
+
+
+
+# $allAdmins = $allAdmins |
+# Where-Object { $_ -and $_.UserPrincipalName } |
+# Group-Object UserPrincipalName |
+# ForEach-Object {
+
+#     $entries = $_.Group
+
+#     $allRoles = ($entries.Role -split ', ' | Sort-Object -Unique)
+
+#     $maxScore = ($entries.AdminRiskScore | Measure-Object -Maximum).Maximum
+#     $level = Get-AdminRiskLevel $maxScore
+
+#     [PSCustomObject]@{
+#         UserPrincipalName           = $entries[0].UserPrincipalName
+#         ObjectId                    = $_.Name
+#         displayName                 = ($entries.displayName | Select-Object -First 1)
+#         Role                        = ($allRoles -join ', ')
+#         hasStrongMFA                = ($entries.hasStrongMFA -contains $true)
+#         AdminRiskScore              = $maxScore
+#         AdminRiskLevel              = $level
+#         lastSignInDateTime          = ($entries.lastSignInDateTime | Sort-Object -Descending | Select-Object -First 1)
+#         ProductivityServicesEnabled = ($entries.ProductivityServicesEnabled -contains $true)
+#     }
+# }
+
 $topRiskAdmins = $allAdmins |
-Where-Object { 
-    $_.displayName -and 
-    $_.displayName.Trim() -ne ""
-} |
 Sort-Object AdminRiskScore -Descending |
-Select-Object -First 10 displayName, Role, AdminRiskScore, AdminRiskLevel
+Select-Object -First 10 @{
+    Name       = 'displayName'
+    Expression = {
+        if ($_.displayName) { $_.displayName }
+        else { ($_.UserPrincipalName -split "@")[0] }
+    }
+}, Role, AdminRiskScore, AdminRiskLevel
 $topRiskAdmins = $topRiskAdmins | Sort-Object AdminRiskScore -Descending
-
-
-$allAdmins = $allAdmins |
-Where-Object { $_ -and $_.UserPrincipalName } |
-Group-Object ObjectId |
-ForEach-Object {
-    $_.Group | Sort-Object AdminRiskScore -Descending | Select-Object -First 1
-}
 
 
 # ----------------------------------------------------
@@ -863,7 +901,8 @@ Write-Host "Exporting data to Excel..." -ForegroundColor Cyan
 
 
 # Administrators
-$administrators | Export-Excel `
+$administrators | Select-Object @{L='Roles';E={$_.Roles -join ','}},displayName, Userprincipalname, companyName, AdminRiskScore, AdminRiskLevel, accountEnabled, CreatedDatetime , LastPasswordChangeDateTime, lastSignInDateTime, hasStrongMFA, StrongAuthCount, AuthPassword, AuthPhone, AuthFido2, AuthPasswordless, AuthMicrosoftAuthenticator, IsLicensed | 
+Export-Excel `
     -NoNumberConversion * `
     -Path $exportPath `
     -WorksheetName "Administrators" `
@@ -874,7 +913,8 @@ $administrators | Export-Excel `
     -Append
 
 # Eligible Roles
-$eligible | Export-Excel `
+$eligible |  Select-Object id, displayName, Userprincipalname, DirectRole, EligibleRoleGroup, memberType, AdminRiskScore, AdminRiskLevel, createdDateTime, LastPasswordChangeDateTime, lastSignInDateTime, hasStrongMFA, StrongAuthCount, AuthPassword, AuthPhone, AuthFido2, AuthPasswordless, AuthMicrosoftAuthenticator, IsLicensed |
+Export-Excel `
     -NoNumberConversion * `
     -Path $exportPath `
     -WorksheetName "Eligible Roles" `
@@ -885,7 +925,8 @@ $eligible | Export-Excel `
     -TableStyle Medium2
 
 # Azure Roles
-$azroles | Export-Excel `
+$azroles | Select-Object @{L='AzureRoles';E={$_.AzureRoles.RoleDefinitionName -join ','}},displayName, Userprincipalname, companyName, AdminRiskScore, AdminRiskLevel, accountEnabled, CreatedDatetime , LastPasswordChangeDateTime, lastSignInDateTime, hasStrongMFA, StrongAuthCount, AuthPassword, AuthPhone, AuthFido2, AuthPasswordless, AuthMicrosoftAuthenticator, IsLicensed |
+Export-Excel `
     -NoNumberConversion * `
     -Path $exportPath `
     -WorksheetName "Azure Roles" `
@@ -1156,7 +1197,8 @@ Set-KPI "F3:G4"
 Set-KPI "I3:J4"
 Set-KPI "L3:M4"
 $ws.Cells["C3:M3"].Style.Font.Color.SetColor([System.Drawing.Color]::DimGray)
-$ws.Cells["C4:M4"].Style.Font.Size = 16
+$ws.Cells["C4:M4"].Style.Font.Size = 14
+$ws.Cells["C4:M4"].Style.Font.Size = 18
 $ws.Cells["C4:M4"].Style.Font.Bold = $true
 
 # ----------------------------------------------------
@@ -1193,16 +1235,16 @@ $rt = $riskCell.RichText
 $rt.Clear()
 
 $t1 = $rt.Add("$textTitle`n")
-$t1.Size = 10
+$t1.Size = 14
 $t1.Color = [System.Drawing.Color]::DimGray
 
 $t2 = $rt.Add("$textMain`n")
 $t2.Bold = $true
-$t2.Size = 18
+$t2.Size = 24
 $t2.Color = [System.Drawing.Color]::DarkOrange
 
 $t3 = $rt.Add("$textSub")
-$t3.Size = 10
+$t3.Size = 14
 $t3.Color = [System.Drawing.Color]::Gray
 
 
@@ -1237,7 +1279,7 @@ $rt = $scoreCell.RichText
 $rt.Clear()
 
 $t1 = $rt.Add("Identity Security Score`n")
-$t1.Size = 10
+$t1.Size = 14
 $t1.Color = [System.Drawing.Color]::DimGray
 
 $t2 = $rt.Add("$postureScore`n")
@@ -1246,11 +1288,11 @@ $t2.Size = 36
 $t2.Color = [System.Drawing.Color]$scoreColor
 
 $t3 = $rt.Add("$postureLevel`n")
-$t3.Size = 12
+$t3.Size = 14
 $t3.Color = [System.Drawing.Color]::DimGray
 
 $t4 = $rt.Add("Grade $grade")
-$t4.Size = 10
+$t4.Size = 12
 $t4.Color = [System.Drawing.Color]::Gray
 
 
@@ -1283,7 +1325,7 @@ $ns.AddNamespace("a", "http://schemas.openxmlformats.org/drawingml/2006/main")
 
 $points = $chartXml.SelectNodes("//c:ser/c:dPt", $ns)
 
-# Ensure datapoints exist (create if missing)
+# Ensure datapoints exist 
 if ($points.Count -eq 0) {
     $serNode = $chartXml.SelectSingleNode("//c:ser", $ns)
 
@@ -1315,8 +1357,7 @@ if ($points.Count -eq 0) {
 
 
 
-$chart.Title.Font.Size = 12
-$chart.Title.Font.Bold = $true
+
 
 
 
@@ -1475,9 +1516,9 @@ if ($points.Count -eq 0) {
 
         switch ($admin.AdminRiskLevel) {
             "Critical" { $srgbClr.SetAttribute("val", "C00000") } # red
-            "High"     { $srgbClr.SetAttribute("val", "FF8C00") } # orange
-            "Medium"   { $srgbClr.SetAttribute("val", "5B9BD5") } # blue
-            default    { $srgbClr.SetAttribute("val", "00B050") } # green
+            "High" { $srgbClr.SetAttribute("val", "FF8C00") } # orange
+            "Medium" { $srgbClr.SetAttribute("val", "5B9BD5") } # blue
+            default { $srgbClr.SetAttribute("val", "00B050") } # green
         }
 
         $solidFill.AppendChild($srgbClr) | Out-Null
