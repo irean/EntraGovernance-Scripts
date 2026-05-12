@@ -1,0 +1,276 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "contentVersion": "1.0.0.0",
+        "triggers": {
+            "manual": {
+                "type": "Request",
+                "kind": "Http",
+                "inputs": {
+                    "schema": {
+                        "properties": {
+                            "data": {
+                                "properties": {
+                                    "callbackUriPath": {
+                                        "description": "CallbackUriPath used for Resume Action",
+                                        "title": "Data.CallbackUriPath",
+                                        "type": "string"
+                                    },
+                                    "subject": {
+                                        "properties": {
+                                            "displayName": { "type": "string" },
+                                            "email": { "type": "string" },
+                                            "id": { "type": "string" },
+                                            "manager": {
+                                                "properties": {
+                                                    "displayName": { "type": "string" },
+                                                    "email": { "type": "string" },
+                                                    "id": { "type": "string" }
+                                                },
+                                                "type": "object"
+                                            },
+                                            "userPrincipalName": { "type": "string" }
+                                        },
+                                        "type": "object"
+                                    },
+                                    "task": {
+                                        "properties": {
+                                            "displayName": { "type": "string" },
+                                            "id": { "type": "string" }
+                                        },
+                                        "type": "object"
+                                    },
+                                    "taskProcessingResult": {
+                                        "properties": {
+                                            "createdDateTime": { "type": "string" },
+                                            "id": { "type": "string" }
+                                        },
+                                        "type": "object"
+                                    },
+                                    "workflow": {
+                                        "properties": {
+                                            "displayName": { "type": "string" },
+                                            "id": { "type": "string" },
+                                            "workflowVerson": { "type": "integer" }
+                                        },
+                                        "type": "object"
+                                    }
+                                },
+                                "type": "object"
+                            },
+                            "source": { "type": "string" },
+                            "type": { "type": "string" }
+                        },
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "actions": {
+            "Is_Onboarding_Workflow": {
+                "type": "If",
+                "runAfter": {},
+                "expression": {
+                    "or": [
+                        {
+                            "equals": [
+                                "@triggerBody()?['data']?['workflow']?['id']",
+                                "ONBOARDING_WORKFLOW_ID_1"
+                            ]
+                        }
+                    ]
+                },
+                "actions": {
+                    "Generate_Initial_Password": {
+                        "type": "Compose",
+                        "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))"
+                    },
+                    "Save_Reset_Timestamp": {
+                        "runAfter": {
+                            "Generate_Initial_Password": [ "Succeeded" ]
+                        },
+                        "type": "Compose",
+                        "inputs": "@utcNow()"
+                    },
+                    "Reset_User_Password": {
+                        "runAfter": {
+                            "Save_Reset_Timestamp": [ "Succeeded" ]
+                        },
+                        "type": "Http",
+                        "inputs": {
+                            "uri": "https://graph.microsoft.com/v1.0/users/@{triggerBody()?['data']?['subject']?['id']}",
+                            "method": "PATCH",
+                            "body": {
+                                "passwordProfile": {
+                                    "password": "@{outputs('Generate_Initial_Password')}",
+                                    "forceChangePasswordNextSignIn": true
+                                }
+                            },
+                            "authentication": {
+                                "type": "ManagedServiceIdentity",
+                                "audience": "https://graph.microsoft.com"
+                            }
+                        }
+                    },
+                    "Send_Password_To_Manager": {
+                        "runAfter": {
+                            "Reset_User_Password": [ "Succeeded" ]
+                        },
+                        "type": "Http",
+                        "inputs": {
+                            "uri": "https://graph.microsoft.com/v1.0/users/governance@epicalgroup.com/sendMail",
+                            "method": "POST",
+                            "headers": { "Content-Type": "application/json" },
+                            "body": {
+                                "message": {
+                                    "subject": "Temporary password – @{triggerBody()?['data']?['subject']?['displayName']}",
+                                    "body": {
+                                        "contentType": "HTML",
+                                        "content": "<p>Hi @{triggerBody()?['data']?['subject']?['manager']?['displayName']},</p><p>Your new employee <strong>@{triggerBody()?['data']?['subject']?['displayName']}</strong> has been assigned the following temporary password:</p><p><strong>@{outputs('Generate_Initial_Password')}</strong></p><p>The password must be changed on first login. If the employee has not logged in within 5 days, the password will be automatically expired.</p>"
+                                    },
+                                    "toRecipients": [
+                                        {
+                                            "emailAddress": {
+                                                "address": "@{triggerBody()?['data']?['subject']?['manager']?['email']}"
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            "authentication": {
+                                "type": "ManagedServiceIdentity",
+                                "audience": "https://graph.microsoft.com"
+                            }
+                        }
+                    },
+                    "Wait_For_Login_Period": {
+                        "runAfter": {
+                            "Send_Password_To_Manager": [ "Succeeded" ]
+                        },
+                        "type": "Wait",
+                        "inputs": {
+                            "interval": {
+                                "count": 5,
+                                "unit": "Day"
+                            }
+                        }
+                    },
+                    "Get_User_Sign_In_Status": {
+                        "runAfter": {
+                            "Wait_For_Login_Period": [ "Succeeded" ]
+                        },
+                        "type": "Http",
+                        "inputs": {
+                            "uri": "https://graph.microsoft.com/v1.0/users/@{triggerBody()?['data']?['subject']?['id']}?$select=signInActivity,lastPasswordChangeDateTime",
+                            "method": "GET",
+                            "authentication": {
+                                "type": "ManagedServiceIdentity",
+                                "audience": "https://graph.microsoft.com"
+                            }
+                        }
+                    },
+                    "Check_Password_Changed_And_Signed_In": {
+                        "runAfter": {
+                            "Get_User_Sign_In_Status": [ "Succeeded" ]
+                        },
+                        "type": "If",
+                        "expression": {
+                            "and": [
+                                {
+                                    "greater": [
+                                        "@body('Get_User_Sign_In_Status')?['lastPasswordChangeDateTime']",
+                                        "@outputs('Save_Reset_Timestamp')"
+                                    ]
+                                },
+                                {
+                                    "not": {
+                                        "equals": [
+                                            "@body('Get_User_Sign_In_Status')?['signInActivity']?['lastSignInDateTime']",
+                                            ""
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        "actions": {},
+                        "else": {
+                            "actions": {
+                                "Generate_Expiry_Password": {
+                                    "type": "Compose",
+                                    "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))"
+                                },
+                                "Reset_Expired_Password": {
+                                    "runAfter": {
+                                        "Generate_Expiry_Password": [ "Succeeded" ]
+                                    },
+                                    "type": "Http",
+                                    "inputs": {
+                                        "uri": "https://graph.microsoft.com/v1.0/users/@{triggerBody()?['data']?['subject']?['id']}",
+                                        "method": "PATCH",
+                                        "body": {
+                                            "passwordProfile": {
+                                                "password": "@{outputs('Generate_Expiry_Password')}",
+                                                "forceChangePasswordNextSignIn": true
+                                            }
+                                        },
+                                        "authentication": {
+                                            "type": "ManagedServiceIdentity",
+                                            "audience": "https://graph.microsoft.com"
+                                        }
+                                    }
+                                },
+                                "Notify_Manager_Contact_ServiceDesk": {
+                                    "runAfter": {
+                                        "Reset_Expired_Password": [ "Succeeded" ]
+                                    },
+                                    "type": "Http",
+                                    "inputs": {
+                                        "uri": "https://graph.microsoft.com/v1.0/users/governance@epicalgroup.com/sendMail",
+                                        "method": "POST",
+                                        "headers": { "Content-Type": "application/json" },
+                                        "body": {
+                                            "message": {
+                                                "subject": "Action required – temporary password expired for @{triggerBody()?['data']?['subject']?['displayName']}",
+                                                "body": {
+                                                    "contentType": "HTML",
+                                                    "content": "<p>Hi @{triggerBody()?['data']?['subject']?['manager']?['displayName']},</p><p>Your employee <strong>@{triggerBody()?['data']?['subject']?['displayName']}</strong> has not logged in and changed their temporary password within 5 days.</p><p>The password has been automatically expired. Please ask the employee to contact the service desk for a new password reset.</p>"
+                                                },
+                                                "toRecipients": [
+                                                    {
+                                                        "emailAddress": {
+                                                            "address": "@{triggerBody()?['data']?['subject']?['manager']?['email']}"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        "authentication": {
+                                            "type": "ManagedServiceIdentity",
+                                            "audience": "https://graph.microsoft.com"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "else": {
+                    "actions": {}
+                }
+            }
+        },
+        "outputs": {},
+        "parameters": {
+            "$connections": {
+                "type": "Object",
+                "defaultValue": {}
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "type": "Object",
+            "value": {}
+        }
+    }
+}
