@@ -83,7 +83,12 @@
                 "actions": {
                     "Generate_Initial_Password": {
                         "type": "Compose",
-                        "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))"
+                        "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))",
+                        "runtimeConfiguration": {
+                            "secureData": {
+                                "properties": [ "inputs" ]
+                            }
+                        }
                     },
                     "Save_Reset_Timestamp": {
                         "runAfter": {
@@ -109,6 +114,11 @@
                             "authentication": {
                                 "type": "ManagedServiceIdentity",
                                 "audience": "https://graph.microsoft.com"
+                            }
+                        },
+                        "runtimeConfiguration": {
+                            "secureData": {
+                                "properties": [ "inputs", "outputs" ]
                             }
                         }
                     },
@@ -197,7 +207,12 @@
                             "actions": {
                                 "Generate_Expiry_Password": {
                                     "type": "Compose",
-                                    "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))"
+                                    "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))",
+                                    "runtimeConfiguration": {
+                                        "secureData": {
+                                            "properties": [ "inputs" ]
+                                        }
+                                    }
                                 },
                                 "Reset_Expired_Password": {
                                     "runAfter": {
@@ -216,6 +231,11 @@
                                         "authentication": {
                                             "type": "ManagedServiceIdentity",
                                             "audience": "https://graph.microsoft.com"
+                                        }
+                                    },
+                                    "runtimeConfiguration": {
+                                        "secureData": {
+                                            "properties": [ "inputs", "outputs" ]
                                         }
                                     }
                                 },

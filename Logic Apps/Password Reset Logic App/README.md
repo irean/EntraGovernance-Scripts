@@ -2,9 +2,9 @@
 
 Deploys an Azure Logic App for automated password resets, wired into Entra ID Lifecycle Workflows as a custom task extension.
 
-Built to handle the part Microsoft's documentation skips — the actual deployment, managed identity setup, and Graph permissions, all in one script.
+Built to handle the part Microsoft's documentation skips — the actual deployment, managed identity setup, Graph permissions, authorization policy, and custom extension registration, all in one script.
 
-Related blog posts at [agderinthe.cloud](https://agderinthe.cloud/author/sandra/)
+Related blog post at [agderinthe.cloud](https://agderinthe.cloud/author/sandra/)
 
 ---
 
@@ -12,12 +12,12 @@ Related blog posts at [agderinthe.cloud](https://agderinthe.cloud/author/sandra/
 
 When triggered by a Lifecycle Workflow on the employee's hire date:
 
-- Generates a temporary password and resets the account
+- Generates a temporary password and resets the account with `forceChangePasswordNextSignIn: true`
 - Sends the password to the manager via email
-- Waits 5 days and checks whether the user has logged in **and** changed their password
+- Waits 5 days and checks whether the user has logged in **and** changed their password after this specific reset
 - If not: resets to a new unknown password and notifies the manager to contact the service desk
 
-The same Logic App handles offboarding — the `Is Onboarding Workflow` condition routes the call to the correct branch based on which workflow triggered it.
+The same Logic App handles offboarding — the `Is Onboarding Workflow` condition routes the call to the correct branch based on which workflow triggered it. For offboarding: resets to an unknown password and revokes all active sessions. No email sent.
 
 ---
 
@@ -25,37 +25,59 @@ The same Logic App handles offboarding — the `Is Onboarding Workflow` conditio
 
 | File | Description |
 |---|---|
-| `Deploy-PasswordResetLogicApp.ps1` | Deploys the Logic App, enables managed identity, and assigns Graph permissions |
+| `Deploy-PasswordResetLogicApp.ps1` | Full deployment script — see below for what it does |
 | `LogicApp.json` | Logic App workflow definition template |
+
+---
+
+## What the script does
+
+1. Deploys the Logic App via ARM REST API with System-assigned Managed Identity
+2. Connects to Microsoft Graph using the existing Azure session — no second login
+3. Assigns required Graph API permissions to the managed identity
+4. Assigns the **User Administrator** Entra ID role — required for password reset via `passwordProfile`
+5. Configures the `AzureADLifecycleWorkflowsAuthPOPAuthPolicy` authorization policy via full ARM PUT
+6. Disables SAS authentication on the Logic App trigger
+7. Registers the Logic App as a custom task extension in Lifecycle Workflows
+8. On update runs: reuses the existing managed identity, skips propagation wait
 
 ---
 
 ## Prerequisites
 
 - PowerShell 7+
-- `Az.Accounts`, `Az.Resources`, `Az.LogicApp` — installed automatically if missing
-- `Microsoft.Graph.Authentication`, `Microsoft.Graph.Applications` — installed automatically if missing
+- `Az.Accounts`, `Az.Resources`, `Az.LogicApp` modules
+- `Microsoft.Graph.Authentication`, `Microsoft.Graph.Applications`, `Microsoft.Graph.Identity.DirectoryManagement` modules
 - An existing Resource Group
 - A mailbox in Exchange Online for the sender address
 - Entra ID P1 or P2 — required for `signInActivity` used in the 5-day check
+- The account running the script needs: Contributor on the Resource Group, `Application.Read.All`, `AppRoleAssignment.ReadWrite.All`, `RoleManagement.ReadWrite.Directory`
 
 ---
 
-## Quick Start
+## Quick start
 
 ```powershell
 . .\Deploy-PasswordResetLogicApp.ps1
 
 Deploy-PasswordResetLogicApp `
-    -SubscriptionId "<subscription-id>" `
-    -ResourceGroup "rg-entra-governance-prod" `
-    -LogicAppName "la-Password-Reset" `
-    -Location "swedencentral" `
-    -MailSender "governance@contoso.com" `
+    -SubscriptionId  "<subscription-id>" `
+    -ResourceGroup   "rg-entra-governance-prod" `
+    -LogicAppName    "la-Password-Reset" `
+    -Location        "swedencentral" `
+    -MailSender      "governance@contoso.com" `
     -OnboardingWorkflowIds @("<lifecycle-workflow-id>")
 ```
 
-**Required permissions to run the script:** `Application.Read.All`, `AppRoleAssignment.ReadWrite.All`, `RoleManagement.ReadWrite.Directory`, Contributor on the Resource Group.
+Optional parameters:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `-CustomExtensionDisplayName` | `Password Reset Extension` | Display name for the custom task extension |
+| `-CustomExtensionDescription` | *(auto)* | Description for the custom task extension |
+| `-LogicAppDefinitionPath` | `.\LogicApp.json` | Path to the Logic App JSON definition |
+| `-TenantId` | *(resolved from context)* | Tenant ID — resolved automatically from Azure context if not provided |
+| `-AppId` + `-CertificateThumbprint` | *(optional)* | Service principal auth — omit for interactive login |
 
 ---
 
@@ -64,18 +86,30 @@ Deploy-PasswordResetLogicApp `
 | Permission | Purpose |
 |---|---|
 | `Mail.Send` | Send email to manager |
-| `User.ReadWrite.All` | Reset password via `passwordProfile` |
+| `User.ReadWrite.All` | Read and write user profiles |
+| `User-PasswordProfile.ReadWrite.All` | Reset password via `passwordProfile` |
 | `UserAuthenticationMethod.ReadWrite.All` | Reset authentication methods |
 | `AuditLog.Read.All` | Read `signInActivity` — requires Entra ID P1/P2 |
 | `User.RevokeSessions.All` | Revoke active sessions on offboarding |
+
+The managed identity is also assigned the **User Administrator** Entra ID role, which is required for password resets via Graph API regardless of app permissions.
 
 ---
 
 ## After deployment
 
-Register the Logic App as a custom task extension in Lifecycle Workflows and set it to **Sequential** mode so the workflow waits for the Logic App to complete before moving on.
+The script registers the Logic App as a custom task extension automatically. The only manual step is adding the **Run a custom task extension** task to your Lifecycle Workflow in the Entra portal and selecting the registered extension. Set the task behavior to **Launch and continue**.
 
-The workflow ID you pass in via `-OnboardingWorkflowIds` determines which branch executes. Add more IDs if multiple onboarding workflows should trigger the same Logic App — the template supports up to two by default (`ONBOARDING_WORKFLOW_ID_1`, `ONBOARDING_WORKFLOW_ID_2`). Add more `equals` blocks in `LogicApp.json` for additional IDs.
+---
+
+## Swapping the delivery mechanism
+
+The password is delivered to the manager via email by default. This is a starting point, not a recommendation. The delivery step is a single HTTP action in the Logic App — swapping it requires no changes to anything else.
+
+Alternatives:
+- **Enterprise password manager** (1Password, Bitwarden) — POST to their REST API, write to a vault the manager has access to
+- **SMS directly to the employee** — any SMS gateway with a REST API (Twilio, Azure Communication Services)
+- **Temporary Access Pass** — for passwordless environments only (cloud-only, Entra-joined devices)
 
 ---
 
