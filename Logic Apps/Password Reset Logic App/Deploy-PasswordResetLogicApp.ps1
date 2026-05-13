@@ -37,7 +37,7 @@ function Set-MIPermissions {
 
     if ($GraphRoles) {
         $mgGraph = (Invoke-MgGraphRequest -Method GET `
-            -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '00000003-0000-0000-c000-000000000000'&`$select=id,appRoles").value[0]
+                -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '00000003-0000-0000-c000-000000000000'&`$select=id,appRoles").value[0]
 
         $GraphRoles | ForEach-Object {
             $roleName = $_
@@ -60,10 +60,12 @@ function Set-MIPermissions {
                     -Body $body `
                     -ContentType "application/json" | Out-Null
                 Write-Host "    Assigned Graph role: $roleName" -ForegroundColor Green
-            } catch {
+            }
+            catch {
                 if ($_ -match "already exists") {
                     Write-Host "    Role '$roleName' already assigned, skipping." -ForegroundColor Yellow
-                } else {
+                }
+                else {
                     throw
                 }
             }
@@ -72,7 +74,7 @@ function Set-MIPermissions {
 }
 
 function Deploy-PasswordResetLogicApp {
-<#
+    <#
 .SYNOPSIS
     Deploys or updates a Logic App for password reset.
 
@@ -184,11 +186,11 @@ function Deploy-PasswordResetLogicApp {
     $ErrorActionPreference = "Stop"
 
     function Write-Step { param([string]$m) Write-Host "`n==> $m" -ForegroundColor Cyan }
-    function Write-Ok   { param([string]$m) Write-Host "    [OK] $m" -ForegroundColor Green }
+    function Write-Ok { param([string]$m) Write-Host "    [OK] $m" -ForegroundColor Green }
     function Write-Warn { param([string]$m) Write-Host "    [!!] $m" -ForegroundColor Yellow }
     function Write-Fail { param([string]$m) Write-Host "    [ERR] $m" -ForegroundColor Red; throw $m }
 
-    #region Authentication
+    #Authentication
 
     Write-Step "Authenticating against Azure"
 
@@ -199,7 +201,8 @@ function Deploy-PasswordResetLogicApp {
             -ApplicationId $AppId `
             -CertificateThumbprint $CertificateThumbprint | Out-Null
         Write-Ok "Authenticated via Service Principal with certificate"
-    } else {
+    }
+    else {
         Connect-AzAccount | Out-Null
         Write-Ok "Authenticated interactively"
     }
@@ -217,9 +220,9 @@ function Deploy-PasswordResetLogicApp {
     Connect-MgGraph -TenantId $TenantId -NoWelcome | Out-Null
     Write-Ok "Graph connected to tenant: $TenantId"
 
-    #endregion
+  
 
-    #region Read JSON definition
+    #Read JSON definition
 
     Write-Step "Reading Logic App definition from $LogicAppDefinitionPath"
 
@@ -229,9 +232,9 @@ function Deploy-PasswordResetLogicApp {
 
     $definitionRaw = Get-Content $LogicAppDefinitionPath -Raw
 
-    #endregion
 
-    #region Replace tenant-specific values
+
+    #Replace tenant-specific values
 
     Write-Step "Replacing tenant-specific values"
 
@@ -250,15 +253,15 @@ function Deploy-PasswordResetLogicApp {
     try {
         $definition = $definitionRaw | ConvertFrom-Json
         Write-Ok "JSON validation OK"
-    } catch {
+    }
+    catch {
         Write-Fail "Invalid JSON after replacement: $_"
     }
 
-    #endregion
 
     $principalId = $null
 
-    #region Check if Logic App exists
+    #Check if Logic App exists
 
     Write-Step "Checking if Logic App '$LogicAppName' already exists"
 
@@ -279,14 +282,15 @@ function Deploy-PasswordResetLogicApp {
             $principalId = $existingPrincipalId
             Write-Ok "Reusing existing Managed Identity Principal ID: $principalId"
         }
-    } else {
+    }
+    else {
         Write-Ok "Logic App does not exist — creating new"
         $isUpdate = $false
     }
 
-    #endregion
 
-    #region Deploy
+
+    #Deploy
 
     Write-Step "Deploying Logic App"
 
@@ -319,10 +323,12 @@ function Deploy-PasswordResetLogicApp {
         # On update: keep existing principal ID if PUT returns same or different one
         if (-not $principalId) {
             $principalId = $putPrincipalId
-        } else {
+        }
+        else {
             Write-Ok "Keeping pre-fetched principal ID: $principalId"
         }
-    } elseif (-not $principalId) {
+    }
+    elseif (-not $principalId) {
         Write-Ok "Waiting for Managed Identity to propagate"
         Start-Sleep -Seconds 20
         $armCheck = Invoke-AzRestMethod `
@@ -334,14 +340,14 @@ function Deploy-PasswordResetLogicApp {
         }
     }
 
-        $logicApp = Get-AzLogicApp -ResourceGroupName $ResourceGroup -Name $LogicAppName
+    $logicApp = Get-AzLogicApp -ResourceGroupName $ResourceGroup -Name $LogicAppName
     $action = if ($isUpdate) { "updated" } else { "created" }
     Write-Ok "Logic App ${action}: $($logicApp.Id)"
     Write-Ok "Managed Identity Principal ID: $principalId"
 
     #endregion
 
-    #region Permissions
+    #Permissions
 
     Write-Step "Assigning Graph API permissions to Managed Identity"
     Write-Ok "Using Principal ID: $principalId"
@@ -355,49 +361,60 @@ function Deploy-PasswordResetLogicApp {
         -ManagedIdentityId $principalId `
         -DisplayName $LogicAppName `
         -GraphRoles @(
-            "Mail.Send",
-            "UserAuthenticationMethod.ReadWrite.All",
-            "AuditLog.Read.All",
-            "User.ReadWrite.All",
-            "User.RevokeSessions.All",
-            "User-PasswordProfile.ReadWrite.All"
-        )
+        "Mail.Send",
+        "UserAuthenticationMethod.ReadWrite.All",
+        "AuditLog.Read.All",
+        "User.ReadWrite.All",
+        "User.RevokeSessions.All",
+        "User-PasswordProfile.ReadWrite.All"
+    )
 
     Write-Ok "Permissions assigned"
 
-    #region Entra ID Role Assignment
+    #Entra ID Role Assignment
 
     Write-Step "Assigning User Administrator role to Managed Identity"
 
-    $userAdminRole = Get-MgDirectoryRole | Where-Object { $_.DisplayName -eq "User Administrator" }
+    $userAdminRole = (Invoke-MgGraphRequest -Method GET `
+            -Uri "https://graph.microsoft.com/v1.0/directoryRoles?`$filter=displayName eq 'User Administrator'").value | Select-Object -First 1
+
     if (-not $userAdminRole) {
-        $roleTemplate = Get-MgDirectoryRoleTemplate | Where-Object { $_.DisplayName -eq "User Administrator" }
-        $userAdminRole = New-MgDirectoryRole -RoleTemplateId $roleTemplate.Id
+        $roleTemplate = (Invoke-MgGraphRequest -Method GET `
+                -Uri "https://graph.microsoft.com/v1.0/directoryRoleTemplates?`$filter=displayName eq 'User Administrator'").value | Select-Object -First 1
+        $userAdminRole = Invoke-MgGraphRequest -Method POST `
+            -Uri "https://graph.microsoft.com/v1.0/directoryRoles" `
+            -Body (@{ roleTemplateId = $roleTemplate.id } | ConvertTo-Json) `
+            -ContentType "application/json"
     }
 
-    $existingMember = Get-MgDirectoryRoleMember -DirectoryRoleId $userAdminRole.Id | 
-        Where-Object { $_.Id -eq $principalId }
+    $existingMembers = (Invoke-MgGraphRequest -Method GET `
+            -Uri "https://graph.microsoft.com/v1.0/directoryRoles/$($userAdminRole.id)/members?`$select=id").value
+    $existingMember = $existingMembers | Where-Object { $_.id -eq $principalId }
 
     if (-not $existingMember) {
         try {
-            New-MgDirectoryRoleMemberByRef -DirectoryRoleId $userAdminRole.Id -BodyParameter @{
-                "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$principalId"
-            }
+            Invoke-MgGraphRequest -Method POST `
+                -Uri "https://graph.microsoft.com/v1.0/directoryRoles/$($userAdminRole.id)/members/`$ref" `
+                -Body (@{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$principalId" } | ConvertTo-Json) `
+                -ContentType "application/json" | Out-Null
             Write-Ok "User Administrator role assigned to managed identity"
-        } catch {
+        }
+        catch {
             if ($_ -match "already exist") {
                 Write-Ok "User Administrator role already assigned"
-            } else {
+            }
+            else {
                 throw
             }
         }
-    } else {
+    }
+    else {
         Write-Ok "User Administrator role already assigned"
     }
 
-    #endregion
+   
 
-    #region Authorization policy
+    #Authorization policy
 
     Write-Step "Configuring authorization policy for Lifecycle Workflows"
 
@@ -443,7 +460,7 @@ function Deploy-PasswordResetLogicApp {
                             }
                         }
                     }
-                    sasAuthenticationPolicy = @{
+                    sasAuthenticationPolicy    = @{
                         state = "Disabled"
                     }
                 }
@@ -453,15 +470,16 @@ function Deploy-PasswordResetLogicApp {
 
     # GET the current full Logic App definition and merge auth policy into it
     $currentApp = (Invoke-AzRestMethod `
-        -Path "${logicAppResourcePath}?api-version=2019-05-01" `
-        -Method GET).Content | ConvertFrom-Json
+            -Path "${logicAppResourcePath}?api-version=2019-05-01" `
+            -Method GET).Content | ConvertFrom-Json
 
     $newAccessControl = ($authPolicy | ConvertFrom-Json).properties.accessControl
 
     # Add accessControl if it doesn't exist yet
     if (-not $currentApp.properties.PSObject.Properties['accessControl']) {
         $currentApp.properties | Add-Member -MemberType NoteProperty -Name accessControl -Value $newAccessControl
-    } else {
+    }
+    else {
         $currentApp.properties.accessControl = $newAccessControl
     }
 
@@ -476,20 +494,21 @@ function Deploy-PasswordResetLogicApp {
         Write-Warn "Authorization policy may not have been set correctly. HTTP $($authResponse.StatusCode)"
         Write-Warn "Error: $($authResponse.Content)"
         Write-Warn "You may need to set it manually in the Azure Portal under Logic App -> Authorization"
-    } else {
+    }
+    else {
         Write-Ok "Authorization policy configured and SAS disabled — Logic App is now compatible with Lifecycle Workflows"
     }
 
-    #endregion
 
-    #region Register custom task extension
+
+    #Register custom task extension
 
     Write-Step "Registering Logic App as custom task extension in Lifecycle Workflows"
 
     $customExtensionBody = @{
-        displayName          = $CustomExtensionDisplayName
-        description          = $CustomExtensionDescription
-        endpointConfiguration = @{
+        displayName                 = $CustomExtensionDisplayName
+        description                 = $CustomExtensionDescription
+        endpointConfiguration       = @{
             "@odata.type"        = "#microsoft.graph.logicAppTriggerEndpointConfiguration"
             subscriptionId       = $SubscriptionId
             resourceGroupName    = $ResourceGroup
@@ -498,12 +517,12 @@ function Deploy-PasswordResetLogicApp {
         authenticationConfiguration = @{
             "@odata.type" = "#microsoft.graph.azureAdPopTokenAuthentication"
         }
-        clientConfiguration = @{
+        clientConfiguration         = @{
             "@odata.type"         = "#microsoft.graph.customExtensionClientConfiguration"
             maximumRetries        = 1
             timeoutInMilliseconds = 1000
         }
-        callbackConfiguration = @{
+        callbackConfiguration       = @{
             "@odata.type"   = "#microsoft.graph.identityGovernance.customTaskExtensionCallbackConfiguration"
             timeoutDuration = "PT1H"
         }
@@ -523,7 +542,8 @@ function Deploy-PasswordResetLogicApp {
             -ContentType "application/json"
         $customExtensionId = $existingExtension.id
         Write-Ok "Custom task extension updated: $customExtensionId"
-    } else {
+    }
+    else {
         $extensionResponse = Invoke-MgGraphRequest `
             -Method POST `
             -Uri "https://graph.microsoft.com/v1.0/identityGovernance/lifecycleWorkflows/customTaskExtensions" `
@@ -533,16 +553,17 @@ function Deploy-PasswordResetLogicApp {
         if ($extensionResponse.id) {
             Write-Ok "Custom task extension registered: $($extensionResponse.id)"
             $customExtensionId = $extensionResponse.id
-        } else {
+        }
+        else {
             Write-Warn "Could not register custom task extension automatically."
             Write-Warn "Register it manually in Entra ID -> Identity Governance -> Lifecycle Workflows -> Custom extensions"
             $customExtensionId = $null
         }
     }
 
-    #endregion
 
-    #region Summary
+
+    #Summary
 
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
@@ -565,12 +586,11 @@ function Deploy-PasswordResetLogicApp {
         Write-Host "  - Add a 'Run a custom task extension' task to your workflow" -ForegroundColor Yellow
         Write-Host "  - Select the extension: $CustomExtensionDisplayName" -ForegroundColor Yellow
         Write-Host "  - Set the task behavior to: Launch and continue" -ForegroundColor Yellow
-    } else {
+    }
+    else {
         Write-Host "  - Register the Logic App manually as a custom extension in Lifecycle Workflows" -ForegroundColor Yellow
     }
     Write-Host "========================================" -ForegroundColor Cyan
 
-    #endregion
 }
 
-#endregion
