@@ -203,7 +203,7 @@ function Deploy-PasswordResetLogicApp {
         Write-Ok "Authenticated via Service Principal with certificate"
     }
     else {
-        Connect-AzAccount | Out-Null
+        Connect-AzAccount -SubscriptionId $SubscriptionId -TenantId $TenantId | Out-Null
         Write-Ok "Authenticated interactively"
     }
 
@@ -217,8 +217,10 @@ function Deploy-PasswordResetLogicApp {
     }
 
     # Connect Graph using existing Azure context — same session, no second login
-    Connect-MgGraph -TenantId $TenantId -NoWelcome | Out-Null
-    Write-Ok "Graph connected to tenant: $TenantId"
+$azToken = Get-AzAccessToken -ResourceUrl "https://graph.microsoft.com" -TenantId $TenantId
+Connect-MgGraph -AccessToken $azToken.Token -NoWelcome | Out-Null
+Connect-MgGraph -TenantId $TenantId -Scopes "Application.Read.All", "AppRoleAssignment.ReadWrite.All", "RoleManagement.ReadWrite.Directory", "LifecycleWorkflows.ReadWrite.All" -NoWelcome | Out-Null
+Write-Ok "Graph connected to tenant: $TenantId"
 
   
 
@@ -418,22 +420,16 @@ function Deploy-PasswordResetLogicApp {
 
     Write-Step "Configuring authorization policy for Lifecycle Workflows"
 
-    # Get the managed identity Application ID (different from Principal/Object ID)
-    $mgIdentitySp = Invoke-MgGraphRequest -Method GET `
-        -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$principalId"
-    $managedIdentityAppId = $mgIdentitySp.appId
-    Write-Ok "Managed Identity App ID (for auth policy): $managedIdentityAppId"
-    Write-Ok "Managed Identity Object ID (Principal ID):  $principalId"
-    Write-Ok "If these match, something is wrong — App ID and Object ID should be different values"  
+
 
     # Lifecycle Workflows service app ID — resolve dynamically as display name varies by tenant
-    $lcwSp = Invoke-MgGraphRequest -Method GET `
-        -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=displayName eq 'Microsoft Entra Lifecycle Workflows' or displayName eq 'AAD Lifecycle Management'&`$select=appId,displayName"
-    $lifecycleWorkflowsAppId = ($lcwSp.value | Select-Object -First 1).appId
-    if (-not $lifecycleWorkflowsAppId) {
-        throw "Could not find Lifecycle Workflows service principal in tenant. Cannot set authorization policy."
-    }
-    Write-Ok "Lifecycle Workflows App ID: $lifecycleWorkflowsAppId"
+$lcwSp = (Invoke-MgGraphRequest -Method GET `
+    -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq 'ce79fdc4-cd1d-4ea5-8139-e74d7dbe0bb7'&`$select=appId,displayName").value | Select-Object -First 1
+$lifecycleWorkflowsAppId = $lcwSp.appId
+if (-not $lifecycleWorkflowsAppId) {
+    throw "Could not find Lifecycle Workflows service principal in tenant. Cannot set authorization policy."
+}
+Write-Ok "Lifecycle Workflows App ID ($($lcwSp.displayName)): $lifecycleWorkflowsAppId"
 
     $logicAppResourcePath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Logic/workflows/$LogicAppName"
 

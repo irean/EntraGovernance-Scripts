@@ -10,14 +10,20 @@ Related blog post at [agderinthe.cloud](https://agderinthe.cloud/author/sandra/)
 
 ## What it does
 
-When triggered by a Lifecycle Workflow on the employee's hire date:
+**Onboarding** — when triggered by a joiner Lifecycle Workflow on the employee's hire date:
 
 - Generates a temporary password and resets the account with `forceChangePasswordNextSignIn: true`
 - Sends the password to the manager via email
-- Waits 5 days and checks whether the user has logged in **and** changed their password after this specific reset
+- Waits a configurable period (default 5 days) and checks whether the user has logged in **and** `forceChangePasswordNextSignIn` is now false — meaning the user changed it themselves
 - If not: resets to a new unknown password and notifies the manager to contact the service desk
 
-The same Logic App handles offboarding — the `Is Onboarding Workflow` condition routes the call to the correct branch based on which workflow triggered it. For offboarding: resets to an unknown password and revokes all active sessions. No email sent.
+**Offboarding** — when triggered by a leaver Lifecycle Workflow:
+
+- Resets to an unknown password nobody has
+- Revokes all active sign-in sessions
+- No email sent, no credential goes anywhere
+
+The `Is Onboarding Workflow` condition routes calls to the correct branch based on which workflow triggered it. The same Logic App handles both scenarios.
 
 ---
 
@@ -33,13 +39,13 @@ The same Logic App handles offboarding — the `Is Onboarding Workflow` conditio
 ## What the script does
 
 1. Deploys the Logic App via ARM REST API with System-assigned Managed Identity
-2. Connects to Microsoft Graph using the existing Azure session — no second login
+2. Connects to Microsoft Graph using the existing Azure token — no second login prompt
 3. Assigns required Graph API permissions to the managed identity
 4. Assigns the **User Administrator** Entra ID role — required for password reset via `passwordProfile`
 5. Configures the `AzureADLifecycleWorkflowsAuthPOPAuthPolicy` authorization policy via full ARM PUT
 6. Disables SAS authentication on the Logic App trigger
 7. Registers the Logic App as a custom task extension in Lifecycle Workflows
-8. On update runs: reuses the existing managed identity, skips propagation wait
+8. On update runs: reuses the existing managed identity principal ID
 
 ---
 
@@ -50,8 +56,8 @@ The same Logic App handles offboarding — the `Is Onboarding Workflow` conditio
 - `Microsoft.Graph.Authentication`, `Microsoft.Graph.Applications`, `Microsoft.Graph.Identity.DirectoryManagement` modules
 - An existing Resource Group
 - A mailbox in Exchange Online for the sender address
-- Entra ID P1 or P2 — required for `signInActivity` used in the 5-day check
-- The account running the script needs: Contributor on the Resource Group, `Application.Read.All`, `AppRoleAssignment.ReadWrite.All`, `RoleManagement.ReadWrite.Directory`
+- Entra ID P1 or P2 — required for `signInActivity`
+- The account running the script needs: Contributor on the Resource Group, `Application.Read.All`, `AppRoleAssignment.ReadWrite.All`, `RoleManagement.ReadWrite.Directory`, `LifecycleWorkflows.ReadWrite.All`
 
 ---
 
@@ -99,6 +105,18 @@ The managed identity is also assigned the **User Administrator** Entra ID role, 
 ## After deployment
 
 The script registers the Logic App as a custom task extension automatically. The only manual step is adding the **Run a custom task extension** task to your Lifecycle Workflow in the Entra portal and selecting the registered extension. Set the task behavior to **Launch and continue**.
+
+---
+
+## Configuring the Logic App
+
+Most changes can be made directly in the Logic App designer without redeploying.
+
+**Changing the wait period** — click `Wait For Login Period` and change the duration. 5 hours for tight security, 7 days for global organizations with multiple time zones.
+
+**Adding a new onboarding workflow ID** — click the `Is Onboarding Workflow` condition, add a new OR row, use the expression `triggerBody()?['data']?['workflow']?['id']` on the left side and paste the new workflow ID on the right.
+
+**Adding offboarding actions** — the False branch already includes reset to unknown password and revoke sessions. Add further steps as needed for your leaver process.
 
 ---
 
