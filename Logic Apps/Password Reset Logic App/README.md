@@ -97,6 +97,7 @@ Optional parameters:
 | `UserAuthenticationMethod.ReadWrite.All` | Reset authentication methods |
 | `AuditLog.Read.All` | Read `signInActivity` — requires Entra ID P1/P2 |
 | `User.RevokeSessions.All` | Revoke active sessions on offboarding |
+| `LifecycleWorkflows.ReadWrite.All` | Register and manage the custom task extension |
 
 The managed identity is also assigned the **User Administrator** Entra ID role, which is required for password resets via Graph API regardless of app permissions.
 
@@ -117,6 +118,10 @@ Most changes can be made directly in the Logic App designer without redeploying.
 **Adding a new onboarding workflow ID** — click the `Is Onboarding Workflow` condition, add a new OR row, use the expression `triggerBody()?['data']?['workflow']?['id']` on the left side and paste the new workflow ID on the right.
 
 **Adding offboarding actions** — the False branch already includes reset to unknown password and revoke sessions. Add further steps as needed for your leaver process.
+
+**Changing the password complexity** — click `Generate Initial Password` or `Generate Expiry Password` to see the expression that generates the password. It uses a combination of `guid()`, `rand()`, and string manipulation to produce something that meets complexity requirements. Modify the expression if your tenant has specific password requirements beyond the defaults.
+
+**Changing the email template** — click the `Email Manager` step to open the sendMail action. The email body is written directly in the action — you can update the subject, the body text, and the formatting here without touching anything else. The password value is referenced as a dynamic expression so it will always pull through correctly regardless of what you change around it. Save when done.
 
 ---
 
