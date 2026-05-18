@@ -18,80 +18,48 @@
                                     },
                                     "subject": {
                                         "properties": {
-                                            "displayName": {
-                                                "type": "string"
-                                            },
-                                            "email": {
-                                                "type": "string"
-                                            },
-                                            "id": {
-                                                "type": "string"
-                                            },
+                                            "displayName": { "type": "string" },
+                                            "email": { "type": "string" },
+                                            "id": { "type": "string" },
                                             "manager": {
                                                 "properties": {
-                                                    "displayName": {
-                                                        "type": "string"
-                                                    },
-                                                    "email": {
-                                                        "type": "string"
-                                                    },
-                                                    "id": {
-                                                        "type": "string"
-                                                    }
+                                                    "displayName": { "type": "string" },
+                                                    "email": { "type": "string" },
+                                                    "id": { "type": "string" }
                                                 },
                                                 "type": "object"
                                             },
-                                            "userPrincipalName": {
-                                                "type": "string"
-                                            }
+                                            "userPrincipalName": { "type": "string" }
                                         },
                                         "type": "object"
                                     },
                                     "task": {
                                         "properties": {
-                                            "displayName": {
-                                                "type": "string"
-                                            },
-                                            "id": {
-                                                "type": "string"
-                                            }
+                                            "displayName": { "type": "string" },
+                                            "id": { "type": "string" }
                                         },
                                         "type": "object"
                                     },
                                     "taskProcessingResult": {
                                         "properties": {
-                                            "createdDateTime": {
-                                                "type": "string"
-                                            },
-                                            "id": {
-                                                "type": "string"
-                                            }
+                                            "createdDateTime": { "type": "string" },
+                                            "id": { "type": "string" }
                                         },
                                         "type": "object"
                                     },
                                     "workflow": {
                                         "properties": {
-                                            "displayName": {
-                                                "type": "string"
-                                            },
-                                            "id": {
-                                                "type": "string"
-                                            },
-                                            "workflowVerson": {
-                                                "type": "integer"
-                                            }
+                                            "displayName": { "type": "string" },
+                                            "id": { "type": "string" },
+                                            "workflowVerson": { "type": "integer" }
                                         },
                                         "type": "object"
                                     }
                                 },
                                 "type": "object"
                             },
-                            "source": {
-                                "type": "string"
-                            },
-                            "type": {
-                                "type": "string"
-                            }
+                            "source": { "type": "string" },
+                            "type": { "type": "string" }
                         },
                         "type": "object"
                     }
@@ -118,26 +86,20 @@
                         "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))",
                         "runtimeConfiguration": {
                             "secureData": {
-                                "properties": [
-                                    "inputs"
-                                ]
+                                "properties": [ "inputs" ]
                             }
                         }
                     },
                     "Save_Reset_Timestamp": {
                         "runAfter": {
-                            "Generate_Initial_Password": [
-                                "Succeeded"
-                            ]
+                            "Generate_Initial_Password": [ "Succeeded" ]
                         },
                         "type": "Compose",
                         "inputs": "@utcNow()"
                     },
                     "Reset_User_Password": {
                         "runAfter": {
-                            "Save_Reset_Timestamp": [
-                                "Succeeded"
-                            ]
+                            "Save_Reset_Timestamp": [ "Succeeded" ]
                         },
                         "type": "Http",
                         "inputs": {
@@ -156,32 +118,25 @@
                         },
                         "runtimeConfiguration": {
                             "secureData": {
-                                "properties": [
-                                    "inputs",
-                                    "outputs"
-                                ]
+                                "properties": [ "inputs", "outputs" ]
                             }
                         }
                     },
                     "Send_Password_To_Manager": {
                         "runAfter": {
-                            "Reset_User_Password": [
-                                "Succeeded"
-                            ]
+                            "Reset_User_Password": [ "Succeeded" ]
                         },
                         "type": "Http",
                         "inputs": {
                             "uri": "https://graph.microsoft.com/v1.0/users/governance@epicalgroup.com/sendMail",
                             "method": "POST",
-                            "headers": {
-                                "Content-Type": "application/json"
-                            },
+                            "headers": { "Content-Type": "application/json" },
                             "body": {
                                 "message": {
                                     "subject": "Temporary password \u2013 @{triggerBody()?['data']?['subject']?['displayName']}",
                                     "body": {
                                         "contentType": "HTML",
-                                        "content": "<p>Hi @{triggerBody()?['data']?['subject']?['manager']?['displayName']},</p><p>Your new employee <strong>@{triggerBody()?['data']?['subject']?['displayName']}</strong> has been assigned the following temporary password:</p><p><strong>@{outputs('Generate_Initial_Password')}</strong></p><p>The password must be changed on first login. If the employee has not logged in within 5 days, the password will be automatically expired.</p>"
+                                        "content": "<p>Hi @{triggerBody()?['data']?['subject']?['manager']?['displayName']},</p><p>A temporary password has been set up for <strong>@{triggerBody()?['data']?['subject']?['displayName']}</strong>.</p><p><strong>@{outputs('Generate_Initial_Password')}</strong></p><p>They will be prompted to change it when they first log in. Please make sure they are aware of this.</p><p>If they have not logged in and changed their password within 5 days, the account will be automatically reset for security reasons and you will receive a follow-up email with next steps.</p><p>If anything is not working as expected, please contact IT.</p><p>Best regards,<br>IT</p>"
                                     },
                                     "toRecipients": [
                                         {
@@ -200,9 +155,7 @@
                     },
                     "Wait_For_Login_Period": {
                         "runAfter": {
-                            "Send_Password_To_Manager": [
-                                "Succeeded"
-                            ]
+                            "Send_Password_To_Manager": [ "Succeeded" ]
                         },
                         "type": "Wait",
                         "inputs": {
@@ -214,9 +167,7 @@
                     },
                     "Get_User_Sign_In_Status": {
                         "runAfter": {
-                            "Wait_For_Login_Period": [
-                                "Succeeded"
-                            ]
+                            "Wait_For_Login_Period": [ "Succeeded" ]
                         },
                         "type": "Http",
                         "inputs": {
@@ -230,9 +181,7 @@
                     },
                     "Check_Password_Changed_And_Signed_In": {
                         "runAfter": {
-                            "Get_User_Sign_In_Status": [
-                                "Succeeded"
-                            ]
+                            "Get_User_Sign_In_Status": [ "Succeeded" ]
                         },
                         "type": "If",
                         "expression": {
@@ -261,17 +210,13 @@
                                     "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))",
                                     "runtimeConfiguration": {
                                         "secureData": {
-                                            "properties": [
-                                                "inputs"
-                                            ]
+                                            "properties": [ "inputs" ]
                                         }
                                     }
                                 },
                                 "Reset_Expired_Password": {
                                     "runAfter": {
-                                        "Generate_Expiry_Password": [
-                                            "Succeeded"
-                                        ]
+                                        "Generate_Expiry_Password": [ "Succeeded" ]
                                     },
                                     "type": "Http",
                                     "inputs": {
@@ -290,32 +235,25 @@
                                     },
                                     "runtimeConfiguration": {
                                         "secureData": {
-                                            "properties": [
-                                                "inputs",
-                                                "outputs"
-                                            ]
+                                            "properties": [ "inputs", "outputs" ]
                                         }
                                     }
                                 },
                                 "Notify_Manager_Contact_ServiceDesk": {
                                     "runAfter": {
-                                        "Reset_Expired_Password": [
-                                            "Succeeded"
-                                        ]
+                                        "Reset_Expired_Password": [ "Succeeded" ]
                                     },
                                     "type": "Http",
                                     "inputs": {
                                         "uri": "https://graph.microsoft.com/v1.0/users/governance@epicalgroup.com/sendMail",
                                         "method": "POST",
-                                        "headers": {
-                                            "Content-Type": "application/json"
-                                        },
+                                        "headers": { "Content-Type": "application/json" },
                                         "body": {
                                             "message": {
                                                 "subject": "Action required \u2013 temporary password expired for @{triggerBody()?['data']?['subject']?['displayName']}",
                                                 "body": {
                                                     "contentType": "HTML",
-                                                    "content": "<p>Hi @{triggerBody()?['data']?['subject']?['manager']?['displayName']},</p><p>Your employee <strong>@{triggerBody()?['data']?['subject']?['displayName']}</strong> has not logged in and changed their temporary password within the required period.</p><p>The password has been automatically expired. Please ask the employee to contact the service desk for a new password reset.</p>"
+                                                    "content": "<p>Hi @{triggerBody()?['data']?['subject']?['manager']?['displayName']},</p><p><strong>@{triggerBody()?['data']?['subject']?['displayName']}</strong> has not logged in or changed their password since their start date. The temporary password has been invalidated and the account has been reset for security reasons.</p><p>To get back in, they need to contact IT \u2014 they will sort it out quickly.</p><p>If there is a reason they could not log in, please let us know and we can take a look.</p><p>Best regards,<br>IT</p>"
                                                 },
                                                 "toRecipients": [
                                                     {
@@ -343,18 +281,14 @@
                             "inputs": "@concat(toUpper(substring(guid(),0,1)),substring(guid(),1,5),'!',string(rand(10,99)),substring(guid(),6,3))",
                             "runtimeConfiguration": {
                                 "secureData": {
-                                    "properties": [
-                                        "inputs"
-                                    ]
+                                    "properties": [ "inputs" ]
                                 }
                             }
                         },
                         "Reset_Offboarding_Password": {
                             "type": "Http",
                             "runAfter": {
-                                "Generate_Offboarding_Password": [
-                                    "Succeeded"
-                                ]
+                                "Generate_Offboarding_Password": [ "Succeeded" ]
                             },
                             "inputs": {
                                 "uri": "https://graph.microsoft.com/v1.0/users/@{triggerBody()?['data']?['subject']?['id']}",
@@ -372,19 +306,14 @@
                             },
                             "runtimeConfiguration": {
                                 "secureData": {
-                                    "properties": [
-                                        "inputs",
-                                        "outputs"
-                                    ]
+                                    "properties": [ "inputs", "outputs" ]
                                 }
                             }
                         },
                         "Revoke_Sign_In_Sessions": {
                             "type": "Http",
                             "runAfter": {
-                                "Reset_Offboarding_Password": [
-                                    "Succeeded"
-                                ]
+                                "Reset_Offboarding_Password": [ "Succeeded" ]
                             },
                             "inputs": {
                                 "uri": "https://graph.microsoft.com/v1.0/users/@{triggerBody()?['data']?['subject']?['id']}/revokeSignInSessions",
