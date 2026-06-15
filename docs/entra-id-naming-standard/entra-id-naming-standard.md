@@ -39,9 +39,11 @@ Hand the *exact same access* to a different persona. Still the same access?
 | Object | Structure | Example |
 |---|---|---|
 | **Access package** | what it is → *(persona, if part of the access)* → what specifically | `License - Baseline 5` · `App - Employee - SAP User Access` · `Role - ICT - User Administration` |
-| **Resource** (swappable content) | function prefix → what it carries — *no persona* | `LIC-M365-E5` · `LIC-M365-F3` · `PIM-EntraGovernanceAdmin-ICT` |
+| **Resource** (swappable content) | function prefix → what it carries — *no persona* | `LIC-M365-E5` · `LIC-M365-F3` · `PIM-EntraGovernanceAdmin` |
 | **Catalog** | persona container | `Identity - Employee` · `Identity - Subcontractor` |
-| **Lifecycle workflow** | persona → event → time (offset) | `Subcontractor - Pre-Onboard (D7Before)` · `Subcontractor - Activate (D0)` · `Subcontractor - License Cleanup (D14After)` |
+| **Lifecycle workflow** | persona → event → time as an [ISO 8601 duration](https://en.wikipedia.org/wiki/ISO_8601#Durations) | `Subcontractor - Pre-Onboard (P7D before)` · `Subcontractor - Activate (P0D)` · `Subcontractor - License Cleanup (P14D after)` |
+
+*Offsets use ISO 8601 durations: `P7D` = seven days, `P0D` = the event day itself. A duration has no direction of its own, so add `before` or `after` the trigger date. (Microsoft stores this as a signed `offsetInDays`, e.g. -7; the name spells it out instead.) See [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601#Durations).*
 
 The same resource can sit behind more than one package (an employee baseline and a subcontractor upgrade; a department and a project). Same access, different route in. Name the resource for what it grants, never for who routed to it. Entra reference-counts the routes for you.
 
