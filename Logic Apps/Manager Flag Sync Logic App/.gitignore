@@ -1,0 +1,6 @@
+# Filled-in deployment parameter files contain real environment values
+# (subscription IDs, managed identity resource IDs, tenant-specific
+# extension attribute names). Keep them local - only the placeholder
+# example file is tracked.
+azuredeploy.parameters.*.json
+!azuredeploy.parameters.example.json

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "value": "<logic-app-name>"
+    },
+    "location": {
+      "value": "<azure-region, e.g. swedencentral>"
+    },
+    "managedIdentityResourceId": {
+      "value": "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>"
+    },
+    "graphBaseUrl": {
+      "value": "https://graph.microsoft.com"
+    },
+    "graphAudience": {
+      "value": "https://graph.microsoft.com"
+    },
+    "directoryExtensionAppId": {
+      "value": "<extension-app-id-without-dashes>"
+    },
+    "directoryExtensionPrefix": {
+      "value": "idg"
+    },
+    "includedEmployeeTypes": {
+      "value": [
+        "Employee",
+        "Subcontractor"
+      ]
+    },
+    "recurrenceInterval": {
+      "value": 1
+    },
+    "recurrenceFrequency": {
+      "value": "Day"
+    },
+    "recurrenceHours": {
+      "value": [
+        2
+      ]
+    }
+  }
+}

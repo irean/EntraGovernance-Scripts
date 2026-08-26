@@ -1,0 +1,260 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": {
+      "type": "Object",
+      "defaultValue": {}
+    },
+    "graphBaseUrl": {
+      "type": "string",
+      "defaultValue": "https://graph.microsoft.com"
+    },
+    "graphAudience": {
+      "type": "string",
+      "defaultValue": "https://graph.microsoft.com"
+    },
+    "managedIdentityResourceId": {
+      "type": "string"
+    },
+    "isManagerAttributeName": {
+      "type": "string"
+    },
+    "managementScopeAttributeName": {
+      "type": "string"
+    },
+    "includedEmployeeTypes": {
+      "type": "array",
+      "defaultValue": [
+        "Employee",
+        "Subcontractor"
+      ]
+    },
+    "recurrenceInterval": {
+      "type": "int",
+      "defaultValue": 1
+    },
+    "recurrenceFrequency": {
+      "type": "string",
+      "defaultValue": "Day"
+    },
+    "recurrenceHours": {
+      "type": "array",
+      "defaultValue": [
+        2
+      ]
+    }
+  },
+  "triggers": {
+    "Recurrence": {
+      "recurrence": {
+        "interval": "@parameters('recurrenceInterval')",
+        "frequency": "@parameters('recurrenceFrequency')",
+        "schedule": {
+          "hours": "@parameters('recurrenceHours')"
+        }
+      },
+      "type": "Recurrence"
+    }
+  },
+  "actions": {
+    "Initialize_variables": {
+      "runAfter": {},
+      "type": "InitializeVariable",
+      "inputs": {
+        "variables": [
+          {
+            "name": "TypeOfManager",
+            "type": "string"
+          },
+          {
+            "name": "EmployeeTypeODataFilter",
+            "type": "string",
+            "value": "@concat('employeeType in (', '''', join(parameters('includedEmployeeTypes'), ''','''), '''', ')')"
+          }
+        ]
+      }
+    },
+    "GetUserPage": {
+      "runAfter": {
+        "Initialize_variables": [
+          "Succeeded"
+        ]
+      },
+      "type": "Http",
+      "inputs": {
+        "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users?$select=id,userPrincipalName,country,employeeType,', parameters('isManagerAttributeName'), ',', parameters('managementScopeAttributeName'), '&$filter=', encodeUriComponent(variables('EmployeeTypeODataFilter')), '&$count=true')",
+        "method": "GET",
+        "headers": {
+          "ConsistencyLevel": "eventual"
+        },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "identity": "@parameters('managedIdentityResourceId')",
+          "audience": "@parameters('graphAudience')"
+        }
+      },
+      "runtimeConfiguration": {
+        "paginationPolicy": {
+          "minimumItemCount": 1000
+        },
+        "contentTransfer": {
+          "transferMode": "Chunked"
+        }
+      }
+    },
+    "For_each": {
+      "foreach": "@body('GetUserPage')?['value']",
+      "actions": {
+        "GetUserDirectreports": {
+          "type": "Http",
+          "inputs": {
+            "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'], '/directreports?$select=country,employeeType')",
+            "method": "GET",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('managedIdentityResourceId')",
+              "audience": "@parameters('graphAudience')"
+            }
+          },
+          "runtimeConfiguration": {
+            "contentTransfer": {
+              "transferMode": "Chunked"
+            }
+          }
+        },
+        "FilterEmplSubs": {
+          "runAfter": {
+            "GetUserDirectreports": [
+              "Succeeded"
+            ]
+          },
+          "type": "Query",
+          "inputs": {
+            "from": "@body('GetUserDirectreports')?['value']",
+            "where": "@contains(parameters('includedEmployeeTypes'), item()?['employeeType'])"
+          }
+        },
+        "hasDirReports": {
+          "runAfter": {
+            "FilterEmplSubs": [
+              "Succeeded"
+            ]
+          },
+          "type": "If",
+          "expression": "@greater(length(body('FilterEmplSubs')), 0)",
+          "actions": {
+            "GetReportCountries": {
+              "type": "Select",
+              "inputs": {
+                "from": "@body('FilterEmplSubs')",
+                "select": "@item()?['country']"
+              }
+            },
+            "Set_TypeOfManager": {
+              "runAfter": {
+                "GetReportCountries": [
+                  "Succeeded"
+                ]
+              },
+              "type": "SetVariable",
+              "inputs": {
+                "name": "TypeOfManager",
+                "value": "@if(greater(length(union(body('GetReportCountries'), body('GetReportCountries'))), 1), 'International', 'National')"
+              }
+            },
+            "SetManagerValues": {
+              "runAfter": {
+                "Set_TypeOfManager": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Http",
+              "inputs": {
+                "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                "method": "PATCH",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), true), parameters('managementScopeAttributeName'), variables('TypeOfManager'))",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "@parameters('managedIdentityResourceId')",
+                  "audience": "@parameters('graphAudience')"
+                }
+              },
+              "runtimeConfiguration": {
+                "contentTransfer": {
+                  "transferMode": "Chunked"
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "isManagerSet": {
+                "type": "If",
+                "expression": "@equals(item()?[parameters('isManagerAttributeName')], true)",
+                "actions": {
+                  "RemoveManagerValues": {
+                    "type": "Http",
+                    "inputs": {
+                      "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                      "method": "PATCH",
+                      "headers": {
+                        "Content-Type": "application/json"
+                      },
+                      "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), false), parameters('managementScopeAttributeName'), '')",
+                      "authentication": {
+                        "type": "ManagedServiceIdentity",
+                        "identity": "@parameters('managedIdentityResourceId')",
+                        "audience": "@parameters('graphAudience')"
+                      }
+                    },
+                    "runtimeConfiguration": {
+                      "contentTransfer": {
+                        "transferMode": "Chunked"
+                      }
+                    }
+                  }
+                },
+                "else": {
+                  "actions": {
+                    "SetManagerValueFalse": {
+                      "type": "Http",
+                      "inputs": {
+                        "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                        "method": "PATCH",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), false), parameters('managementScopeAttributeName'), '')",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "identity": "@parameters('managedIdentityResourceId')",
+                          "audience": "@parameters('graphAudience')"
+                        }
+                      },
+                      "runtimeConfiguration": {
+                        "contentTransfer": {
+                          "transferMode": "Chunked"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "runAfter": {
+        "GetUserPage": [
+          "Succeeded"
+        ]
+      },
+      "type": "Foreach"
+    }
+  },
+  "outputs": {}
+}
