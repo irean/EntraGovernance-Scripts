@@ -21,7 +21,16 @@
       "type": "string"
     },
     "managementScopeAttributeName": {
-      "type": "string"
+      "type": "string",
+      "defaultValue": ""
+    },
+    "internationalCountryCode1": {
+      "type": "string",
+      "defaultValue": "SWE"
+    },
+    "internationalCountryCode2": {
+      "type": "string",
+      "defaultValue": "FIN"
     },
     "includedEmployeeTypes": {
       "type": "array",
@@ -71,6 +80,11 @@
             "name": "EmployeeTypeODataFilter",
             "type": "string",
             "value": "@concat('employeeType in (', '''', join(parameters('includedEmployeeTypes'), ''','''), '''', ')')"
+          },
+          {
+            "name": "UserSelectFields",
+            "type": "string",
+            "value": "@if(empty(parameters('managementScopeAttributeName')), concat('id,userPrincipalName,country,employeeType,', parameters('isManagerAttributeName')), concat('id,userPrincipalName,country,employeeType,', parameters('isManagerAttributeName'), ',', parameters('managementScopeAttributeName')))"
           }
         ]
       }
@@ -83,7 +97,7 @@
       },
       "type": "Http",
       "inputs": {
-        "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users?$select=id,userPrincipalName,country,employeeType,', parameters('isManagerAttributeName'), ',', parameters('managementScopeAttributeName'), '&$filter=', encodeUriComponent(variables('EmployeeTypeODataFilter')), '&$count=true')",
+        "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users?$select=', variables('UserSelectFields'), '&$filter=', encodeUriComponent(variables('EmployeeTypeODataFilter')), '&$count=true')",
         "method": "GET",
         "headers": {
           "ConsistencyLevel": "eventual"
@@ -144,59 +158,71 @@
           "type": "If",
           "expression": "@greater(length(body('FilterEmplSubs')), 0)",
           "actions": {
-            "GetReportCountries": {
-              "type": "Select",
+            "CheckCountry1": {
+              "type": "Query",
               "inputs": {
                 "from": "@body('FilterEmplSubs')",
-                "select": "@item()?['country']"
+                "where": "@equals(item()?['country'], parameters('internationalCountryCode1'))"
+              }
+            },
+            "CheckCountry2": {
+              "runAfter": {
+                "CheckCountry1": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Query",
+              "inputs": {
+                "from": "@body('FilterEmplSubs')",
+                "where": "@equals(item()?['country'], parameters('internationalCountryCode2'))"
               }
             },
             "Set_TypeOfManager": {
               "runAfter": {
-                "GetReportCountries": [
+                "CheckCountry2": [
                   "Succeeded"
                 ]
               },
               "type": "SetVariable",
               "inputs": {
                 "name": "TypeOfManager",
-                "value": "@if(greater(length(union(body('GetReportCountries'), body('GetReportCountries'))), 1), 'International', 'National')"
+                "value": "@if(greaterOrEquals(add(if(not(empty(body('CheckCountry1'))), 1, 0), if(not(empty(body('CheckCountry2'))), 1, 0)), 2), 'International', 'National')"
               }
             },
-            "SetManagerValues": {
+            "HasManagementScopeAttribute": {
               "runAfter": {
                 "Set_TypeOfManager": [
                   "Succeeded"
                 ]
               },
-              "type": "Http",
-              "inputs": {
-                "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
-                "method": "PATCH",
-                "headers": {
-                  "Content-Type": "application/json"
-                },
-                "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), true), parameters('managementScopeAttributeName'), variables('TypeOfManager'))",
-                "authentication": {
-                  "type": "ManagedServiceIdentity",
-                  "identity": "@parameters('managedIdentityResourceId')",
-                  "audience": "@parameters('graphAudience')"
+              "type": "If",
+              "expression": "@not(empty(parameters('managementScopeAttributeName')))",
+              "actions": {
+                "SetManagerValues": {
+                  "type": "Http",
+                  "inputs": {
+                    "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                    "method": "PATCH",
+                    "headers": {
+                      "Content-Type": "application/json"
+                    },
+                    "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), true), parameters('managementScopeAttributeName'), variables('TypeOfManager'))",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "identity": "@parameters('managedIdentityResourceId')",
+                      "audience": "@parameters('graphAudience')"
+                    }
+                  },
+                  "runtimeConfiguration": {
+                    "contentTransfer": {
+                      "transferMode": "Chunked"
+                    }
+                  }
                 }
               },
-              "runtimeConfiguration": {
-                "contentTransfer": {
-                  "transferMode": "Chunked"
-                }
-              }
-            }
-          },
-          "else": {
-            "actions": {
-              "isManagerSet": {
-                "type": "If",
-                "expression": "@equals(item()?[parameters('isManagerAttributeName')], true)",
+              "else": {
                 "actions": {
-                  "RemoveManagerValues": {
+                  "SetManagerValuesIsManagerOnly": {
                     "type": "Http",
                     "inputs": {
                       "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
@@ -204,7 +230,7 @@
                       "headers": {
                         "Content-Type": "application/json"
                       },
-                      "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), false), parameters('managementScopeAttributeName'), '')",
+                      "body": "@addProperty(json('{}'), parameters('isManagerAttributeName'), true)",
                       "authentication": {
                         "type": "ManagedServiceIdentity",
                         "identity": "@parameters('managedIdentityResourceId')",
@@ -217,27 +243,120 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {
+              "isManagerSet": {
+                "type": "If",
+                "expression": "@equals(item()?[parameters('isManagerAttributeName')], true)",
+                "actions": {
+                  "HasManagementScopeAttributeRemove": {
+                    "type": "If",
+                    "expression": "@not(empty(parameters('managementScopeAttributeName')))",
+                    "actions": {
+                      "RemoveManagerValues": {
+                        "type": "Http",
+                        "inputs": {
+                          "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                          "method": "PATCH",
+                          "headers": {
+                            "Content-Type": "application/json"
+                          },
+                          "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), false), parameters('managementScopeAttributeName'), '')",
+                          "authentication": {
+                            "type": "ManagedServiceIdentity",
+                            "identity": "@parameters('managedIdentityResourceId')",
+                            "audience": "@parameters('graphAudience')"
+                          }
+                        },
+                        "runtimeConfiguration": {
+                          "contentTransfer": {
+                            "transferMode": "Chunked"
+                          }
+                        }
+                      }
+                    },
+                    "else": {
+                      "actions": {
+                        "RemoveManagerValuesIsManagerOnly": {
+                          "type": "Http",
+                          "inputs": {
+                            "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                            "method": "PATCH",
+                            "headers": {
+                              "Content-Type": "application/json"
+                            },
+                            "body": "@addProperty(json('{}'), parameters('isManagerAttributeName'), false)",
+                            "authentication": {
+                              "type": "ManagedServiceIdentity",
+                              "identity": "@parameters('managedIdentityResourceId')",
+                              "audience": "@parameters('graphAudience')"
+                            }
+                          },
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 },
                 "else": {
                   "actions": {
-                    "SetManagerValueFalse": {
-                      "type": "Http",
-                      "inputs": {
-                        "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
-                        "method": "PATCH",
-                        "headers": {
-                          "Content-Type": "application/json"
-                        },
-                        "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), false), parameters('managementScopeAttributeName'), '')",
-                        "authentication": {
-                          "type": "ManagedServiceIdentity",
-                          "identity": "@parameters('managedIdentityResourceId')",
-                          "audience": "@parameters('graphAudience')"
+                    "HasManagementScopeAttributeSetFalse": {
+                      "type": "If",
+                      "expression": "@not(empty(parameters('managementScopeAttributeName')))",
+                      "actions": {
+                        "SetManagerValueFalse": {
+                          "type": "Http",
+                          "inputs": {
+                            "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                            "method": "PATCH",
+                            "headers": {
+                              "Content-Type": "application/json"
+                            },
+                            "body": "@addProperty(addProperty(json('{}'), parameters('isManagerAttributeName'), false), parameters('managementScopeAttributeName'), '')",
+                            "authentication": {
+                              "type": "ManagedServiceIdentity",
+                              "identity": "@parameters('managedIdentityResourceId')",
+                              "audience": "@parameters('graphAudience')"
+                            }
+                          },
+                          "runtimeConfiguration": {
+                            "contentTransfer": {
+                              "transferMode": "Chunked"
+                            }
+                          }
                         }
                       },
-                      "runtimeConfiguration": {
-                        "contentTransfer": {
-                          "transferMode": "Chunked"
+                      "else": {
+                        "actions": {
+                          "SetManagerValueFalseIsManagerOnly": {
+                            "type": "Http",
+                            "inputs": {
+                              "uri": "@concat(parameters('graphBaseUrl'), '/v1.0/users/', item()?['id'])",
+                              "method": "PATCH",
+                              "headers": {
+                                "Content-Type": "application/json"
+                              },
+                              "body": "@addProperty(json('{}'), parameters('isManagerAttributeName'), false)",
+                              "authentication": {
+                                "type": "ManagedServiceIdentity",
+                                "identity": "@parameters('managedIdentityResourceId')",
+                                "audience": "@parameters('graphAudience')"
+                              }
+                            },
+                            "runtimeConfiguration": {
+                              "contentTransfer": {
+                                "transferMode": "Chunked"
+                              }
+                            }
+                          }
                         }
                       }
                     }

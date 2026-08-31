@@ -10,8 +10,14 @@ param managedIdentityResourceId string
 @description('The FULL directory extension attribute name used to flag a user as a manager, e.g. extension_<extension-app-id-without-dashes>_idg_isManager. Must already exist in the tenant - this template does not create it.')
 param isManagerAttributeName string
 
-@description('The FULL directory extension attribute name used to store the manager\'s scope (National/International), e.g. extension_<extension-app-id-without-dashes>_idg_managementScope. Must already exist in the tenant - this template does not create it.')
-param managementScopeAttributeName string
+@description('The FULL directory extension attribute name used to store the manager\'s scope (National/International). Leave empty to skip management-scope handling entirely - only isManagerAttributeName is then set/cleared. Must already exist in the tenant if provided - this template does not create it.')
+param managementScopeAttributeName string = ''
+
+@description('First country code (Graph "country" property format, e.g. ISO 3166-1 alpha-3 like "SWE") that counts toward "International". See internationalCountryCode2 and the README for how to add a third.')
+param internationalCountryCode1 string = 'SWE'
+
+@description('Second country code that counts toward "International" - a manager is International once their direct reports span at least two of the configured country codes.')
+param internationalCountryCode2 string = 'FIN'
 
 @description('Base URL for Microsoft Graph. Only change this for a national/sovereign cloud Graph endpoint.')
 param graphBaseUrl string = 'https://graph.microsoft.com'
@@ -66,6 +72,12 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
       }
       managementScopeAttributeName: {
         value: managementScopeAttributeName
+      }
+      internationalCountryCode1: {
+        value: internationalCountryCode1
+      }
+      internationalCountryCode2: {
+        value: internationalCountryCode2
       }
       includedEmployeeTypes: {
         value: includedEmployeeTypes

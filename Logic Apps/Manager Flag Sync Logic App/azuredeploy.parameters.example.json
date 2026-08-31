@@ -17,11 +17,17 @@
     "graphAudience": {
       "value": "https://graph.microsoft.com"
     },
-    "directoryExtensionAppId": {
-      "value": "<extension-app-id-without-dashes>"
+    "isManagerAttributeName": {
+      "value": "extension_<extension-app-id-without-dashes>_idg_isManager"
     },
-    "directoryExtensionPrefix": {
-      "value": "idg"
+    "managementScopeAttributeName": {
+      "value": "extension_<extension-app-id-without-dashes>_idg_managementScope"
+    },
+    "internationalCountryCode1": {
+      "value": "SWE"
+    },
+    "internationalCountryCode2": {
+      "value": "FIN"
     },
     "includedEmployeeTypes": {
       "value": [

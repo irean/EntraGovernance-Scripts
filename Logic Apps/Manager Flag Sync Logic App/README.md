@@ -1,18 +1,25 @@
 # Entra Manager Flag Sync
 
-A Consumption Logic App that keeps two Entra ID directory extension attributes
-in sync for every employee/subcontractor: whether they are a manager, and
-whether their team is national or international.
+A Consumption Logic App that keeps an Entra ID directory extension attribute
+in sync for every employee/subcontractor - whether they are a manager - and
+optionally a second attribute for whether their team is national or
+international.
 
 Runs on a daily recurrence. For each in-scope user it looks at their direct
 reports and:
 
 - If they have at least one direct report who is an Employee or Subcontractor,
-  it sets the "is manager" attribute to `true` and the "management scope"
-  attribute to `International` (direct reports span more than one country) or
-  `National` (all in one country).
+  it sets the "is manager" attribute to `true`. If a management-scope
+  attribute is configured (see below), it also sets it to `International`
+  (direct reports span at least two of the configured "international" country
+  codes - Sweden and Finland by default) or `National` (they don't).
 - Otherwise, if the "is manager" attribute was previously `true`, it clears
-  both attributes.
+  it (and the management-scope attribute, if configured).
+
+The management-scope attribute and the international-country logic are both
+entirely optional - see [Configuration](#configuration) and
+[Adding a third international country](#adding-a-third-or-more-international-country)
+below.
 
 Deployment is pushed with Azure PowerShell — no manual edits in the Azure
 Portal designer required. The template is authored in Bicep (`main.bicep`),
@@ -70,7 +77,8 @@ hardcoded in the template.
 | `location` | Azure region. | resource group's region |
 | `managedIdentityResourceId` | Full resource ID of the user-assigned managed identity to assign to the Logic App and use for Graph calls. | — |
 | `isManagerAttributeName` | Full name of the "is manager" directory extension attribute, e.g. `extension_<extension-app-id-without-dashes>_idg_isManager`. | — |
-| `managementScopeAttributeName` | Full name of the "management scope" directory extension attribute, e.g. `extension_<extension-app-id-without-dashes>_idg_managementScope`. | — |
+| `managementScopeAttributeName` | Full name of the "management scope" directory extension attribute, e.g. `extension_<extension-app-id-without-dashes>_idg_managementScope`. **Optional** - leave it empty (`""`) to skip management-scope handling entirely; only `isManagerAttributeName` is then set/cleared, and the country checks below never run their PATCH. | `""` (disabled) |
+| `internationalCountryCode1` / `internationalCountryCode2` | The two country codes (Graph `country` property values, e.g. ISO 3166-1 alpha-3) that count toward "International". A manager is International once their direct reports span **at least two of these configured codes** - reports in other, unlisted countries don't count on their own. Only used when `managementScopeAttributeName` is set. | `SWE` / `FIN` |
 | `graphBaseUrl` / `graphAudience` | Microsoft Graph base URL / token audience. Only change for a sovereign cloud. | `https://graph.microsoft.com` |
 | `includedEmployeeTypes` | `employeeType` values that count as a real direct report. | `["Employee", "Subcontractor"]` |
 | `recurrenceInterval` / `recurrenceFrequency` / `recurrenceHours` | The trigger schedule. | every 1 day, at 02:00 |
@@ -116,6 +124,44 @@ Connect-AzAccount
 
 Re-running the same command against an existing Logic App updates it in
 place.
+
+## Adding a third (or more) international country
+
+By default, two country codes are built in as parameters
+(`internationalCountryCode1` = `SWE`, `internationalCountryCode2` = `FIN`),
+checked by two explicit actions inside `hasDirReports` in
+`workflow.definition.json`: `CheckCountry1` and `CheckCountry2`. Each is a
+plain `Query` action filtering that user's direct reports down to one
+country code - visible and editable as ordinary Condition/Filter-style
+actions in the Logic App Designer, not hidden inside a single clever
+expression. `Set_TypeOfManager` then counts how many of those checks came
+back non-empty and calls it `International` once that count reaches 2.
+
+To recognize a third country (say Norway, `NOR`), duplicate the pattern:
+
+1. Add a new workflow parameter, e.g. `internationalCountryCode3` (no
+   default, or default it to `NOR` if you want it built in rather than
+   optional), in both `workflow.definition.json`'s `parameters` block and
+   `main.bicep` (as a Bicep `param` plus its entry under
+   `properties.parameters`) - and in `azuredeploy.json` if you keep it
+   in sync (see below).
+2. Copy the `CheckCountry2` action, rename the copy to `CheckCountry3`, add
+   `"runAfter": { "CheckCountry2": ["Succeeded"] }`, and point its `where`
+   clause at `parameters('internationalCountryCode3')` instead.
+3. Change `Set_TypeOfManager`'s `runAfter` to `CheckCountry3`, and extend its
+   expression with one more term:
+   ```
+   add(
+     if(not(empty(body('CheckCountry1'))), 1, 0),
+     if(not(empty(body('CheckCountry2'))), 1, 0),
+     if(not(empty(body('CheckCountry3'))), 1, 0)
+   )
+   ```
+   Keep the `greaterOrEquals(..., 2)` threshold as-is - "International" still
+   means at least two of the configured countries are represented, it just
+   now has three candidates instead of two to draw from.
+4. Add `internationalCountryCode3` to your parameters file, and to the table
+   in [Configuration](#configuration) above for the next person.
 
 ## If you need to change the workflow logic
 
