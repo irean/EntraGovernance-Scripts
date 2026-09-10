@@ -564,3 +564,334 @@ function Start-BulkAddUsersToAccessPackage {
     Date: 2025-11-10
 #>
 }
+function Get-GraphUsersByFilter {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Filter,
+ 
+        [Parameter(Mandatory = $false)]
+        [string]$Select = 'id,displayName,userPrincipalName',
+ 
+        [Parameter(Mandatory = $false)]
+        [switch]$AdvancedQuery = $true
+    )
+ 
+    $uri = "https://graph.microsoft.com/v1.0/users?`$filter=$Filter&`$select=$Select&`$count=true"
+ 
+    Write-Host "`n Querying Graph for users matching filter:" -ForegroundColor Cyan
+    Write-Host "   $Filter" -ForegroundColor White
+ 
+    try {
+        $users = igall -Uri $uri -Eventual:$AdvancedQuery
+    }
+    catch {
+        Write-Host "Graph query failed. Check your filter syntax." -ForegroundColor Red
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Yellow
+        return @()
+    }
+ 
+    if (-not $users) {
+        Write-Warning "No users matched the filter."
+        return @()
+    }
+ 
+    Write-Host "Found $($users.Count) matching user(s)." -ForegroundColor Green
+    return $users
+    <#
+.SYNOPSIS
+    Retrieves users from Microsoft Graph matching an OData $filter expression.
+ 
+.DESCRIPTION
+    Wraps the igall pagination helper to run a $filter query against
+    /v1.0/users, with ConsistencyLevel: eventual + $count=true enabled by
+    default so that advanced filter operators (startsWith, not, multi-clause
+    'and'/'or', etc.) work as expected.
+ 
+.PARAMETER Filter
+    An OData filter expression, e.g.:
+      "department eq 'Sales'"
+      "startsWith(displayName,'Contoso')"
+      "accountEnabled eq true and department eq 'Finance'"
+ 
+.PARAMETER Select
+    Comma-separated list of properties to return. Defaults to
+    'id,displayName,userPrincipalName' which is what
+    Invoke-AccessPackageOperation expects.
+ 
+.PARAMETER AdvancedQuery
+    Adds the ConsistencyLevel: eventual header required for advanced query
+    capabilities. Defaults to $true; only disable for simple 'eq' filters
+    on indexed properties if you hit throttling issues.
+ 
+.EXAMPLE
+    Get-GraphUsersByFilter -Filter "department eq 'Sales' and accountEnabled eq true"
+ 
+.REQUIRED_SCOPES
+    User.Read.All
+ 
+.NOTES
+    Author: Sandra Saluti
+    Depends on: igall, ConvertTo-PSCustomObject (from the same toolkit)
+#>
+}
+
+function Start-BulkAccessPackageOperationByFilter {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AccessPackageId,
+ 
+        [Parameter(Mandatory = $true)]
+        [string]$AssignmentPolicyId,
+ 
+        [Parameter(Mandatory = $true)]
+        [string]$Filter,
+ 
+        [Parameter(Mandatory = $true, ParameterSetName = 'Add')]
+        [switch]$AdminAdd,
+ 
+        [Parameter(Mandatory = $true, ParameterSetName = 'Remove')]
+        [switch]$AdminRemove,
+ 
+        [Parameter(Mandatory = $false)]
+        [switch]$BypassApproval,
+ 
+        [Parameter(Mandatory = $false)]
+        [int]$MaxUsers = 500,
+ 
+        [Parameter(Mandatory = $false)]
+        [switch]$PreviewOnly
+    )
+ 
+    Write-Host "==========================================" -ForegroundColor DarkGray
+    Write-Host "   BULK ACCESS PACKAGE OPERATION BY FILTER    " -ForegroundColor Cyan
+    Write-Host "==========================================" -ForegroundColor DarkGray
+ 
+    # --- Ensure required modules ---
+    Test-Module -Name Microsoft.Graph.Authentication
+    Test-Module -Name ImportExcel
+ 
+    # --- Connect to Microsoft Graph ---
+    $requiredScopes = @(
+        "User.Read.All",
+        "EntitlementManagement.ReadWrite.All"
+    )
+ 
+    Write-Host "`n Connecting to Microsoft Graph..." -ForegroundColor Yellow
+    Connect-MgGraph -Scopes $requiredScopes | Out-Null
+ 
+    $context = $null
+    $retries = 0
+    do {
+        $context = Get-MgContext
+        if (-not $context) {
+            Start-Sleep -Seconds 2
+            $retries++
+        }
+    } while (-not $context -and $retries -lt 5)
+ 
+    if (-not $context) {
+        Write-Host "Could not verify Graph connection. Exiting." -ForegroundColor Red
+        return
+    }
+    Write-Host "Connected to Graph successfully as $($context.Account)." -ForegroundColor Green
+ 
+    # --- Validate Access Package ---
+    Write-Host "`n--- ACCESS PACKAGE ---" -ForegroundColor Cyan
+    try {
+        $accessPackageResponse = Invoke-MgGraphRequest `
+            -Uri "https://graph.microsoft.com/v1.0/identityGovernance/entitlementManagement/accessPackages/$AccessPackageId" `
+            -ErrorAction Stop
+ 
+        $accessPackageName = $accessPackageResponse['displayName']
+ 
+        if (-not $accessPackageName) {
+            Write-Host "Access Package found but displayName could not be read." -ForegroundColor Red
+            return
+        }
+ 
+        Write-Host "Access Package : $accessPackageName" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Access Package not found. Check the ID and your permissions." -ForegroundColor Red
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Yellow
+        return
+    }
+ 
+    # --- Validate Assignment Policy ---
+    Write-Host "`n--- ASSIGNMENT POLICY ---" -ForegroundColor Cyan
+    try {
+        $policyResponse = Invoke-MgGraphRequest `
+            -Uri "https://graph.microsoft.com/v1.0/identityGovernance/entitlementManagement/assignmentPolicies/$AssignmentPolicyId" `
+            -ErrorAction Stop
+ 
+        $policyName = $policyResponse['displayName']
+ 
+        if (-not $policyName) {
+            Write-Host "Assignment Policy found but displayName could not be read." -ForegroundColor Red
+            return
+        }
+ 
+        Write-Host "Assignment Policy : $policyName" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Assignment Policy not found. Check the ID and your permissions." -ForegroundColor Red
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Yellow
+        return
+    }
+ 
+    # --- Resolve users from filter ---
+    Write-Host "`n--- RESOLVE USERS FROM FILTER ---" -ForegroundColor Cyan
+    $users = Get-GraphUsersByFilter -Filter $Filter
+ 
+    if (-not $users -or $users.Count -eq 0) {
+        Write-Warning "No users matched the filter. Nothing to do."
+        return
+    }
+ 
+    if ($users.Count -gt $MaxUsers) {
+        Write-Host "`n Filter matched $($users.Count) users, which exceeds -MaxUsers ($MaxUsers)." -ForegroundColor Red
+        Write-Host "   This safeguard exists to stop an overly broad filter from touching too many accounts." -ForegroundColor Yellow
+        Write-Host "   Narrow the filter, or re-run with a higher -MaxUsers if this is intentional." -ForegroundColor Yellow
+        return
+    }
+ 
+    Write-Host "`n Preview of matched users (first 10):" -ForegroundColor Cyan
+    $users | Select-Object -First 10 -Property displayName, userPrincipalName | Format-Table -AutoSize | Out-Host
+ 
+    if ($PreviewOnly) {
+        Write-Host "`n -PreviewOnly specified: no changes were made." -ForegroundColor Yellow
+        return $users
+    }
+ 
+    # --- Confirm before proceeding ---
+    $operation = if ($AdminAdd) { "ADD" } else { "REMOVE" }
+    Write-Host "`n You are about to $operation $($users.Count) users:" -ForegroundColor Yellow
+    Write-Host "   Filter         : $Filter" -ForegroundColor White
+    Write-Host "   Package        : $accessPackageName" -ForegroundColor White
+    Write-Host "   Policy         : $policyName" -ForegroundColor White
+    Write-Host "   Bypass Approval: $($BypassApproval.IsPresent)" -ForegroundColor White
+    $confirm = Read-Host "Type 'yes' to confirm"
+ 
+    if ($confirm -ne 'yes') {
+        Write-Warning "Cancelled by user."
+        return
+    }
+ 
+    # --- Run operation ---
+    $requestType = if ($AdminAdd) { "adminAdd" } else { "adminRemove" }
+    $results = Invoke-AccessPackageOperation `
+        -AccessPackageId $AccessPackageId `
+        -AssignmentPolicyId $AssignmentPolicyId `
+        -UserList $users `
+        -RequestType $requestType `
+        -BypassApproval:$BypassApproval
+ 
+    # --- Export results to Excel ---
+    Write-Host "`n Select output folder for results export..." -ForegroundColor Yellow
+    $folderPath = Select-FolderPath
+    if (-not $folderPath) {
+        Write-Warning "No folder selected. Results not exported."
+        return
+    }
+ 
+    $date = Get-Date -Format 'yyyy-MM-dd'
+    $safeName = $accessPackageName -replace '[^\w\-]', '_'
+    $exportPath = Join-Path $folderPath "$operation-ByFilter-$safeName-$date.xlsx"
+ 
+    $results | Export-Excel -Path $exportPath `
+        -WorksheetName 'Results' `
+        -TableStyle Medium2 -AutoSize -AutoFilter -FreezeTopRow -BoldTopRow `
+        -TableName 'ResultsTable'
+ 
+    Write-Host "Results exported to: $exportPath" -ForegroundColor Green
+ 
+    Write-Host "==========================================" -ForegroundColor DarkGray
+    Write-Host "   OPERATION COMPLETE                    " -ForegroundColor Cyan
+    Write-Host "==========================================" -ForegroundColor DarkGray
+    <#
+.SYNOPSIS
+    Bulk adds or removes users to/from an Access Package, selected via a
+    Microsoft Graph $filter query instead of an Excel file.
+ 
+.DESCRIPTION
+    Start-BulkAccessPackageOperationByFilter connects to Microsoft Graph,
+    validates the provided Access Package and Assignment Policy, resolves
+    the target users with an OData filter against /v1.0/users, and performs
+    either an adminAdd or adminRemove operation for each matched user.
+ 
+    A -MaxUsers safeguard blocks execution if the filter matches more users
+    than expected (default 500), and -PreviewOnly lets you inspect the
+    matched user list before anything is submitted.
+ 
+.PARAMETER AccessPackageId
+    The ObjectId of the Access Package to target.
+ 
+.PARAMETER AssignmentPolicyId
+    The ObjectId of the Assignment Policy within the Access Package.
+ 
+.PARAMETER Filter
+    An OData filter expression evaluated against /v1.0/users, e.g.
+    "department eq 'Sales'" or "startsWith(displayName,'Contoso')".
+ 
+.PARAMETER AdminAdd
+    Switch to perform an adminAdd operation (assign matched users to the
+    Access Package). Cannot be used together with -AdminRemove.
+ 
+.PARAMETER AdminRemove
+    Switch to perform an adminRemove operation (remove matched users from
+    the Access Package). Cannot be used together with -AdminAdd.
+ 
+.PARAMETER BypassApproval
+    When specified, adds justification to the request body to attempt to
+    bypass the approval workflow. Only effective if the assignment policy
+    permits bypass.
+ 
+.PARAMETER MaxUsers
+    Safety limit on how many users a single filter run may touch. Defaults
+    to 500; the run stops with a warning if the filter matches more.
+ 
+.PARAMETER PreviewOnly
+    Resolves and displays the matched users, then stops before requesting
+    confirmation or submitting anything.
+ 
+.EXAMPLE
+    Start-BulkAccessPackageOperationByFilter `
+        -AccessPackageId "b3a77f84-6a3d-44b1-9f50-d32c17346a31" `
+        -AssignmentPolicyId "929sio0q99ww" `
+        -Filter "department eq 'Sales' and accountEnabled eq true" `
+        -AdminAdd `
+        -PreviewOnly
+ 
+.EXAMPLE
+    Start-BulkAccessPackageOperationByFilter `
+        -AccessPackageId "b3a77f84-6a3d-44b1-9f50-d32c17346a31" `
+        -AssignmentPolicyId "929sio0q99ww" `
+        -Filter "startsWith(displayName,'Contoso')" `
+        -AdminRemove
+ 
+.INPUTS
+    None. Parameters are passed directly.
+ 
+.OUTPUTS
+    Excel (.xlsx) file with columns:
+      - UserPrincipalName
+      - DisplayName
+      - ObjectId
+      - Status
+      - Error
+ 
+.REQUIRED_SCOPES
+    User.Read.All
+    EntitlementManagement.ReadWrite.All
+ 
+.NOTES
+    Author: Sandra Saluti
+    Version: 1.0
+    Tags: Microsoft Graph, Entitlement Management, Access Package, Bulk Assignment, Filter
+    Depends on: Test-Module, igall, ConvertTo-PSCustomObject, Select-FolderPath,
+                Invoke-AccessPackageOperation, Get-GraphUsersByFilter (same toolkit)
+    Date: 2026-09-10
+#>
+}
