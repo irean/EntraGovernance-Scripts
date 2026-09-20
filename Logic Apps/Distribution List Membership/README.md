@@ -1,5 +1,7 @@
 # Distribution List Membership Solution — Bicep edition
 
+[➔ Download the Latest Release Assets](https://github.com/irean/EntraGovernance-Scripts/releases/tag/v1.0.0)
+
 This solution reacts to Microsoft Entra ID Governance (Entitlement
 Management) access package assignments and removals, and adds or removes the
 target user from one or more Exchange Online distribution lists accordingly.
