@@ -12,7 +12,7 @@ Built from real-world consulting work, these tools solve integration problems th
 | **`DirectoryExtensions/`** | Deployment scripts for managing Entra ID directory extensions as core governance metadata. |
 | **`Guest Users/`** | Scripts for external guest account lifecycle, provisioning, and access management governance. |
 | **`HelperFunctions/`** | Shared PowerShell utility functions, including environment validation and structured logging modules. |
-| **`Logic Apps/`** | Enterprise orchestration workloads and automated cloud workflows. Includes: <br>• **`Distribution List Membership Bicep`**: Automated management of Exchange Online distribution lists using a zero-secrets Bicep framework. |
+| **`Logic Apps/`** | Enterprise orchestration workloads and automated cloud workflows. Includes: <br>• **`Distribution List Membership Bicep`**: Automated management of Exchange Online distribution lists using a zero-secrets Bicep framework.<br>• **`Manager Flag Sync Logic App`**: Workflow for synchronization and management of internal manager flags and attributes.<br>• **`Password Reset Logic App`**: Automation for self-service or governed password reset handling and tracking. |
 | **`docs/`** | Architectural notes, naming guidelines, and internal environment standards (e.g., `entra id naming standard`). |
 
 ## Releases and Bundles
