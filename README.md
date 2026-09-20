@@ -22,4 +22,4 @@ Pre-built components and structured zip deployments are available under the **[R
 Sandra Saluti is an Identity Consultant specializing in Microsoft Entra ID Governance and automation, building tools based on production deployments and enterprise architectures.
 
 * **Blog:** [agderinthecloud.cloud](https://agderinthecloud.cloud)
-* **LinkedIn:** [://linkedin.com](https://www.://linkedin.com)
+* **LinkedIn:** [://linkedin.com](https://www.linkedin.com/in/sandra-saluti-6866a686/)
