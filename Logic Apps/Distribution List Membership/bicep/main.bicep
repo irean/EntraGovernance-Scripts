@@ -128,7 +128,13 @@ resource uamiAppRoleAssignment 'Microsoft.Graph/appRoleAssignedTo@v1.0' = {
   principalId: uami.properties.principalId
   resourceId: fnSp.id
 }
-
+// Assign the Exchange.ManageAsApp role to the uami
+// Guids are from https://learn.microsoft.com/en-us/powershell/exchange/connect-exo-powershell-managed-identity?view=exchange-ps#step-4-grant-the-exchangemanageasapp-api-permission-for-the-managed-identity-to-call-exchange-online
+resource uamiExchangeRightsRoleAssignment 'Microsoft.Graph/appRoleAssignedTo@v1.0' = {
+  appRoleId: 'dc50a0fb-09a3-484d-be87-e023b12c6440'
+  principalId: exchangeRightsUami.properties.principalId
+  resourceId: '45fa3f9b-f3fb-4b80-9a51-018755175e0d'
+}
 module functionAppModule 'modules/functionapp.bicep' = {
   name: 'dl-membership-functionapp'
   params: {
