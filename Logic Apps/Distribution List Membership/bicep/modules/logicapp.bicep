@@ -369,93 +369,16 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                         }
                       }
                     }
-                    Parse_Function_Response: {
-                      type: 'ParseJson'
+                    Report_Completion_To_Entra: {
+                      type: 'Http'
                       runAfter: {
                         Call_Function_DistributionListMembership: [
                           'Succeeded'
                         ]
                       }
                       inputs: {
-                        content: '@body(\'Call_Function_DistributionListMembership\')'
-                        schema: {
-                          type: 'object'
-                          properties: {
-                            OverallStatus: {
-                              type: 'string'
-                            }
-                            Results: {
-                              type: 'array'
-                              items: {
-                                type: 'object'
-                                properties: {
-                                  DistributionList: {
-                                    type: 'string'
-                                  }
-                                  Status: {
-                                    type: 'string'
-                                  }
-                                  Note: {
-                                    type: 'string'
-                                  }
-                                  Error: {
-                                    type: 'string'
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                    Condition_OverallStatus_NotSuccess: {
-                      type: 'If'
-                      expression: {
-                        and: [
-                          {
-                            not: {
-                              equals: [
-                                '@body(\'Parse_Function_Response\')?[\'OverallStatus\']'
-                                'Success'
-                              ]
-                            }
-                          }
-                        ]
-                      }
-                      runAfter: {
-                        Parse_Function_Response: [
-                          'Succeeded'
-                        ]
-                      }
-                      actions: {
-                        Compose_FailureSummary: {
-                          type: 'Compose'
-                          runAfter: {}
-                          inputs: {
-                            AccessPackageAssignmentRequestId: '@{triggerBody()?[\'AccessPackageAssignmentRequestId\']}'
-                            UserId: '@{triggerBody()?[\'Assignment\']?[\'Target\']?[\'ObjectId\']}'
-                            OverallStatus: '@{body(\'Parse_Function_Response\')?[\'OverallStatus\']}'
-                            Results: '@{body(\'Parse_Function_Response\')?[\'Results\']}'
-                          }
-                        }
-                      }
-                      else: {
-                        actions: {}
-                      }
-                    }
-                    Report_Completion_To_Entra_BestEffort: {
-                      type: 'Http'
-                      runAfter: {
-                        Condition_OverallStatus_NotSuccess: [
-                          'Succeeded'
-                          'Failed'
-                          'Skipped'
-                          'TimedOut'
-                        ]
-                      }
-                      inputs: {
                         method: 'POST'
-                        uri: 'https://graph.microsoft.com/beta/identityGovernance/entitlementManagement/accessPackageAssignmentRequests/@{triggerBody()?[\'AccessPackageAssignmentRequestId\']}/resume'
+                        uri: 'https://graph.microsoft.com/v1.0@{triggerBody()?[\'CallbackUriPath\']}'
                         headers: {
                           'Content-type': 'application/json'
                         }
@@ -470,9 +393,10 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                             // the leading '@' by doubling it to '@@', otherwise ARM's template
                             // validator tries to parse 'odata.type' as a function call and
                             // fails with "expected token 'LeftParenthesis' and actual 'Dot'".
+                            stage: '@{triggerBody()?[\'Stage\']}'
                             '@@odata.type': 'microsoft.graph.accessPackageAssignmentRequestCallbackData'
                             customExtensionStageInstanceId: '@{triggerBody()?[\'CustomExtensionStageInstanceId\']}'
-                            customExtensionStageInstanceDetail: '@{concat(\'DL provisioning: \', body(\'Parse_Function_Response\')?[\'OverallStatus\'])}'
+                            customExtensionStageInstanceDetail: '@{concat(\'DL provisioning: \', body(\'Call_Function_DistributionListMembership\')?[\'OverallStatus\'])}'
                           }
                         }
                         authentication: {
@@ -481,6 +405,7 @@ resource logicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                           audience: 'https://graph.microsoft.com'
                         }
                       }
+                      operationOptions: 'DisableAsyncPattern'
                     }
                   }
                   else: {

@@ -116,9 +116,11 @@ script publishes the Function App code itself via `Publish-AzWebApp`.
   artifact ...`.
 - **Permissions**: rights to create resources in the target resource group;
   Global Administrator/Application Administrator-level Entra roles (or
-  equivalent) to create app registrations, service principals, and grant
-  Entitlement Management roles; and Exchange Administrator/Organization
-  Management rights for the (always-interactive) Exchange Online sign-in.
+  equivalent — including for the Service Principal, if you use
+  `-AppId`/`-CertificateThumbprint`/`-TenantId` auth) to create app
+  registrations, service principals, and grant Entitlement Management
+  roles; and Exchange Administrator/Organization Management rights for the
+  always-interactive Exchange Online sign-in.
 
 ## Setup
 
@@ -156,12 +158,24 @@ Run it from the same folder that directly contains
 `function-distributionlist-membership\` folder (see the note under
 "Behavior notes" below on why this matters).
 
-You'll be prompted to sign in interactively — once for Azure, once for
-Microsoft Graph, and once for Exchange Online:
+By default you'll be prompted to sign in interactively — once for Azure,
+once for Microsoft Graph, and once for Exchange Online:
 ```powershell
 .\Complete-EntitlementManagementSetup.ps1 `
   -SubscriptionId "<subscription-id>" -ResourceGroup "<resource-group>" `
   -Organization "<yourtenant>.onmicrosoft.com" -AccessPackageCatalogId "<catalog-id>"
+```
+
+Azure and Microsoft Graph sign-in can instead run non-interactively via a
+Service Principal with certificate-based auth — supply `-AppId`,
+`-CertificateThumbprint`, and `-TenantId` together (Exchange Online has no
+Service Principal path in this script and always prompts you interactively,
+regardless):
+```powershell
+.\Complete-EntitlementManagementSetup.ps1 `
+  -SubscriptionId "<subscription-id>" -ResourceGroup "<resource-group>" `
+  -Organization "<yourtenant>.onmicrosoft.com" -AccessPackageCatalogId "<catalog-id>" `
+  -AppId "<app-id>" -CertificateThumbprint "<certificate-thumbprint>" -TenantId "<tenant-id>"
 ```
 
 Optional parameters you can add:
@@ -171,6 +185,10 @@ Optional parameters you can add:
   template ID if you ever need a different role (default
   `e2182095-804a-4656-ae11-64734e9b7ae5`)
 - `-CustomExtensionDisplayName` / `-CustomExtensionDescription`
+- `-TenantId` / `-AppId` / `-CertificateThumbprint` — Service Principal auth
+  for the Azure and Microsoft Graph sign-in steps; omit all three for
+  interactive login (the default). `-TenantId` alone (without the other
+  two) can also be passed just to pick a tenant for interactive sign-in.
 - `-CustomRoleName` — name of the least-privilege Exchange role the script
   creates (default `DistributionListMembershipOnly`)
 
@@ -215,13 +233,17 @@ and confirm the distribution list membership updates.
    values.
 2. Confirms the Bicep CLI is available (PATH, then
    `%USERPROFILE%\.Azure\bin`).
-3. Authenticates interactively to Azure Resource Manager and sets the
-   subscription context.
-4. Authenticates interactively to Microsoft Graph with delegated scopes
-   `EntitlementManagement.ReadWrite.All` and
-   `RoleManagement.ReadWrite.Directory`.
-5. Connects to Exchange Online, interactively; sign in with an account that
-   has Organization Management / Exchange Administrator rights.
+3. Authenticates to Azure Resource Manager and sets the subscription
+   context — via Service Principal with a certificate if `-AppId`,
+   `-CertificateThumbprint`, and `-TenantId` are all supplied, interactively
+   otherwise.
+4. Authenticates to Microsoft Graph the same way — via Service Principal
+   with a certificate if all three are supplied, or interactively with
+   delegated scopes `EntitlementManagement.ReadWrite.All` and
+   `RoleManagement.ReadWrite.Directory` otherwise.
+5. Connects to Exchange Online, always interactively regardless of the
+   authentication method used above; sign in with an account that has
+   Organization Management / Exchange Administrator rights.
 6. Deploys `bicep\main.bicep` with `bicep\main.bicepparam` — this creates or
    updates both UAMIs, the Function App Registration/service
    principal/app-role assignment, the Function App and its plan/storage/auth
@@ -259,8 +281,13 @@ and confirm the distribution list membership updates.
   current working directory instead. If you `cd` somewhere else before
   running the script, that step can fail to find the function code even
   though the Bicep deployment still works.
-- **Every sign-in is interactive.** Azure, Microsoft Graph, and Exchange
-  Online each prompt you separately when you run the script.
+- **Exchange Online sign-in is always interactive.** Azure Resource Manager
+  and Microsoft Graph sign-in are interactive by default too, but switch to
+  non-interactive Service Principal auth (certificate-based) when `-AppId`,
+  `-CertificateThumbprint`, and `-TenantId` are all supplied. Exchange
+  Online has no Service Principal path in this script, so it always prompts
+  you to sign in with an account that has Organization Management /
+  Exchange Administrator rights.
 - **The Exchange role assignment can take a while to actually take effect.**
   Per Microsoft's own documentation on RBAC for Applications, permission
   changes for an app (service principal) are subject to a cache that

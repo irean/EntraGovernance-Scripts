@@ -200,6 +200,11 @@ $extensionBody = @{
         resourceGroupName    = $ResourceGroup
         logicAppWorkflowName = $LogicAppName
     }
+
+    callbackConfiguration = @{
+        "@odata.type" = "#microsoft.graph.customExtensionCallbackConfiguration"
+        timeoutDuration = "PT5M"
+    }   
     authenticationConfiguration = @{ "@odata.type" = "#microsoft.graph.azureAdPopTokenAuthentication" }
 } | ConvertTo-Json -Depth 10
 
