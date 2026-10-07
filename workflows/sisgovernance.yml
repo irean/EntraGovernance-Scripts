@@ -1,0 +1,81 @@
+# Runs the SiSGovernance tests and PSScriptAnalyzer on every push and pull
+# request that touches the module. Microsoft Graph is mocked in the tests, so
+# no tenant, secrets or sign-in are needed.
+name: SiSGovernance
+
+on:
+  push:
+    paths:
+      - 'SiSGovernance/**'
+      - '.github/workflows/sisgovernance.yml'
+  pull_request:
+    paths:
+      - 'SiSGovernance/**'
+      - '.github/workflows/sisgovernance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.shell == 'pwsh' && 'PowerShell 7' || 'Windows PowerShell 5.1' }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [pwsh, powershell]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+        working-directory: SiSGovernance
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install modules
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer, ImportExcel, Microsoft.Graph.Authentication -Scope CurrentUser -Force
+
+      - name: Run Pester tests
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = './Tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputFormat = 'JUnitXml'
+          $config.TestResult.OutputPath = 'TestResults.xml'
+          # Code coverage once is enough - in PowerShell 7
+          if ($PSVersionTable.PSEdition -eq 'Core') {
+              $config.CodeCoverage.Enabled = $true
+              $config.CodeCoverage.Path = @('./SiSGovernance/Public', './SiSGovernance/Private')
+              $config.CodeCoverage.OutputPath = 'Coverage.xml'
+              $config.CodeCoverage.CoveragePercentTarget = 75
+          }
+          Invoke-Pester -Configuration $config
+
+      - name: Run PSScriptAnalyzer
+        if: matrix.shell == 'pwsh'
+        run: |
+          $findings = @(Invoke-ScriptAnalyzer -Path ./SiSGovernance -Recurse -Settings ./PSScriptAnalyzerSettings.psd1)
+          if ($findings.Count -gt 0) {
+              $findings | Format-Table Severity, RuleName, ScriptName, Line, Message -AutoSize -Wrap | Out-String -Width 4096 | Write-Host
+              throw "PSScriptAnalyzer found $($findings.Count) issue(s)."
+          }
+          Write-Host 'PSScriptAnalyzer: no findings.'
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.shell }}
+          path: |
+            SiSGovernance/TestResults.xml
+            SiSGovernance/Coverage.xml
+          if-no-files-found: ignore

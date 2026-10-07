@@ -1,0 +1,90 @@
+TOPIC
+    about_SiSGovernance
+
+SHORT DESCRIPTION
+    Microsoft Entra ID Governance with Microsoft Graph: access packages, their
+    resources and assignments, in bulk and safely.
+
+LONG DESCRIPTION
+    SiSGovernance manages Entitlement Management in Microsoft Entra ID through
+    Microsoft Graph:
+
+      New-SiSAccessPackage               Create an empty access package
+      Add-SiSAccessPackageResource       Add a group, application or SharePoint
+                                         role to one or more access packages
+      Remove-SiSAccessPackageResource    Remove it again
+      Get-SiSAccessPackageResourceRole   List the roles a resource offers
+      Add-SiSAccessPackageAssignment     Assign users in bulk
+      Remove-SiSAccessPackageAssignment  Remove users' assignments in bulk
+      Export-SiSDistributionList         Export distribution lists to Excel
+      Sync-SiSAccessPackage              Create, link or update access packages
+                                         from that Excel file
+      Get-SiSGraphUser                   Users matching a Graph filter
+
+    An access package is a stable identity and its resources are swappable
+    content. That's why creating a package and managing what it grants are
+    separate functions.
+
+CONNECTING
+    The module never signs in by itself. Connect to Microsoft Graph first, the
+    way that suits where it runs - interactively, with a certificate, or with a
+    managed identity:
+
+      Connect-MgGraph -Scopes User.Read.All, GroupMember.Read.All,
+          EntitlementManagement.ReadWrite.All
+
+    Every function checks that the connection has the scopes it needs, and
+    stops with the exact Connect-MgGraph command to run if it doesn't.
+
+PREVIEW AND CONFIRMATION
+    Every function that changes something reads everything first, shows a
+    preview, and asks once - also when many objects are piped in.
+
+      -WhatIf           Show what would happen, change nothing
+      -Confirm:$false   Change without asking, e.g. in an Azure Function
+
+ERRORS AND RESULTS
+    A problem that stops the whole run is a normal PowerShell error: $? is
+    $false, and -ErrorAction Stop turns it into an exception for try/catch.
+
+    A problem with a single user or package doesn't stop the others. Every
+    function returns one object per user, package or row, with a Status - so
+    the results can be piped on:
+
+      $results = $upns | Add-SiSAccessPackageAssignment -AccessPackageId $apId `
+          -AssignmentPolicyId $policyId -SkipReport -Confirm:$false
+      $results | Where-Object Status -like 'Failed*'
+
+    Re-running is safe: work that's already done is reported (AlreadyAssigned,
+    AlreadyAdded, Linked, Unchanged...) instead of failing or duplicating.
+
+RUNNING WITHOUT ANY INPUT
+      Sync-SiSAccessPackage                 -OutputPath and -Confirm:$false
+      Export-SiSDistributionList            -OutputPath
+      Add-/Remove-SiSAccessPackageAssignment  -SkipReport (or -OutputPath)
+                                            and -Confirm:$false
+      New-SiSAccessPackage,
+      Add-/Remove-SiSAccessPackageResource  -Confirm:$false
+
+PERFORMANCE
+    Calls that touch many objects use Graph JSON batching (20 requests per
+    call), retry 429/503/504 with Retry-After or exponential backoff, and pause
+    between write batches (-DelayMs, default 1000 ms). -Verbose shows each batch
+    and every retry.
+
+SECURITY
+    Ask only for the scopes you need, and use the least privileged
+    Entitlement Management role on the catalog (Access package manager or
+    Access package assignment manager), activated with PIM for the run.
+
+    The Excel files contain names and email addresses - treat them as personal
+    data. Text from Entra is always written to Excel as text, never as a
+    formula or a link.
+
+SEE ALSO
+    Get-Help <function> -Full
+    https://github.com/irean/EntraGovernance-Scripts/tree/main/SiSGovernance
+    https://learn.microsoft.com/graph/permissions-reference
+
+KEYWORDS
+    Entra, EntitlementManagement, AccessPackage, IdentityGovernance, Graph

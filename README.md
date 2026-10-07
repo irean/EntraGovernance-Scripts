@@ -8,6 +8,7 @@ Built from real-world consulting work, these tools solve integration problems th
 
 | Directory | Description |
 | :--- | :--- |
+| **`SiSGovernance/`** | PowerShell module for access packages, their resources and assignments in bulk, and distribution lists → access packages. See its [README](SiSGovernance/README.md). |
 | **`Access Packages/`** | Production scripts and template frameworks for managing Entra ID Access Packages. |
 | **`DirectoryExtensions/`** | Deployment scripts for managing Entra ID directory extensions as core governance metadata. |
 | **`Guest Users/`** | Scripts for external guest account lifecycle, provisioning, and access management governance. |
