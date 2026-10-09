@@ -102,6 +102,4 @@ Remove-ApplicationDirectoryExtension `
 
 ## Author
 
-**Sandra Saluti** — Identity & Governance Consultant at Epical
-[LinkedIn](https://www.linkedin.com/in/sandra-saluti-6866a686/) ·
-[Blog](https://agderinthe.cloud/author/sandra/)
+Sandra Saluti
